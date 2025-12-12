@@ -16,12 +16,15 @@ export function SortableTaskCard({ task, onClick }: SortableTaskCardProps) {
     setNodeRef,
     transform,
     transition,
-    isDragging
+    isDragging,
+    isOver
   } = useSortable({ id: task.id });
 
   const style = {
     transform: CSS.Transform.toString(transform),
-    transition
+    transition,
+    // Add z-index to ensure dragging card is above others
+    zIndex: isDragging ? 10 : undefined
   };
 
   return (
@@ -29,8 +32,11 @@ export function SortableTaskCard({ task, onClick }: SortableTaskCardProps) {
       ref={setNodeRef}
       style={style}
       className={cn(
-        'touch-none',
-        isDragging && 'opacity-50 scale-[0.98]'
+        'touch-none transition-all duration-150',
+        // When being dragged - show placeholder state
+        isDragging && 'opacity-40 scale-[0.98] ring-2 ring-dashed ring-primary/30 rounded-xl',
+        // When another card is over this one - show drop indicator
+        isOver && !isDragging && 'ring-2 ring-primary/50 rounded-xl'
       )}
       {...attributes}
       {...listeners}
