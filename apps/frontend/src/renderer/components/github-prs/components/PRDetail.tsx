@@ -437,8 +437,8 @@ export function PRDetail({
         // Show success message
         setPostSuccess({ count: idsToPost.length, timestamp: Date.now() });
         // After posting, check for new commits (follow-up review now available)
-        // Use a small delay to allow the backend to save the posted state
-        setTimeout(() => checkForNewCommits(), 500);
+        // The useEffect will also trigger this when reviewResult changes from the store update
+        checkForNewCommits();
       }
     } finally {
       setIsPostingFindings(false);
@@ -452,7 +452,7 @@ export function PRDetail({
     try {
       const success = await onPostReview([]);
       if (success) {
-        setTimeout(() => checkForNewCommits(), 500);
+        checkForNewCommits();
       }
     } finally {
       setIsPosting(false);
@@ -477,7 +477,7 @@ export function PRDetail({
       // Step 2: Post the approval (no findings = approve status)
       const approvalSuccess = await onPostReview([]);
       if (approvalSuccess) {
-        setTimeout(() => checkForNewCommits(), 500);
+        checkForNewCommits();
       }
     } finally {
       setIsPosting(false);

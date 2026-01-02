@@ -1320,22 +1320,12 @@ export function registerPRHandlers(
       debugLog('checkNewCommits handler called', { projectId, prNumber });
 
       const result = await withProjectOrNull(projectId, async (project) => {
-        // Check if review exists and has reviewed_commit_sha
-        const githubDir = path.join(project.path, '.auto-claude', 'github');
-        const reviewPath = path.join(githubDir, 'pr', `review_${prNumber}.json`);
-
-        let review: PRReviewResult;
-        try {
-          const rawData = fs.readFileSync(reviewPath, 'utf-8');
-          const sanitizedData = sanitizeNetworkData(rawData);
-          review = JSON.parse(sanitizedData);
-        } catch {
-          // File doesn't exist or couldn't be read
+        const review = getReviewResult(project, prNumber);
+        if (!review) {
           return { hasNewCommits: false, newCommitCount: 0 };
         }
 
-        // Convert snake_case to camelCase for the field
-        const reviewedCommitSha = review.reviewedCommitSha || (review as any).reviewed_commit_sha;
+        const reviewedCommitSha = review.reviewedCommitSha;
         if (!reviewedCommitSha) {
           debugLog('No reviewedCommitSha in review', { prNumber });
           return { hasNewCommits: false, newCommitCount: 0 };
@@ -1373,11 +1363,10 @@ export function registerPRHandlers(
           )) as { ahead_by?: number; total_commits?: number; commits?: Array<{ commit: { committer: { date: string } } }> };
 
           // Check if findings have been posted and if new commits are after the posting date
-          const postedAt = review.postedAt || (review as any).posted_at;
           let hasCommitsAfterPosting = true; // Default to true if we can't determine
 
-          if (postedAt && comparison.commits && comparison.commits.length > 0) {
-            const postedAtDate = new Date(postedAt);
+          if (review.postedAt && comparison.commits && comparison.commits.length > 0) {
+            const postedAtDate = new Date(review.postedAt);
             // Check if any commit is newer than when findings were posted
             hasCommitsAfterPosting = comparison.commits.some(c => {
               const commitDate = new Date(c.commit.committer.date);
@@ -1385,22 +1374,20 @@ export function registerPRHandlers(
             });
             debugLog('Comparing commit dates with posted_at', {
               prNumber,
-              postedAt,
+              postedAt: review.postedAt,
               latestCommitDate: comparison.commits[comparison.commits.length - 1]?.commit.committer.date,
               hasCommitsAfterPosting,
             });
-          } else if (!postedAt) {
+          } else if (!review.postedAt) {
             // If findings haven't been posted yet, any new commits should trigger follow-up
             hasCommitsAfterPosting = true;
           }
 
           const newCommitCount = comparison.ahead_by || comparison.total_commits || 1;
 
-          // Sync "Needs Re-review" label if review was posted and has new commits
-          const hasPostedFindings = review.hasPostedFindings || (review as any).has_posted_findings;
-          if (hasPostedFindings) {
+          if (review.hasPostedFindings && hasCommitsAfterPosting) {
             await markPRNeedsRereview(config.token, config.repo, prNumber);
-            debugLog('Added needs re-review label', { prNumber, newCommitCount });
+            debugLog('Added needs re-review label', { prNumber, newCommitCount, hasCommitsAfterPosting });
           }
 
           return {

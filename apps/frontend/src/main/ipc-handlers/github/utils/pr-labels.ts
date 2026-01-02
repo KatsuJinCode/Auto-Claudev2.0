@@ -7,6 +7,7 @@
  * Colors for GitHub setup:
  *   AC: Approved          #22C55E (green)
  *   AC: Changes Requested #EF4444 (red)
+ *   AC: Reviewed          #3B82F6 (blue) - comment-only review
  *   AC: Needs Re-review   #F59E0B (amber)
  */
 
@@ -17,16 +18,21 @@ const LABEL_PREFIX = 'AC:';
 export const AC_LABELS = {
   APPROVED: 'AC: Approved',
   CHANGES_REQUESTED: 'AC: Changes Requested',
+  REVIEWED: 'AC: Reviewed',
   NEEDS_REREVIEW: 'AC: Needs Re-review',
 } as const;
 
 export type ReviewStatus = 'approve' | 'request_changes' | 'comment';
 
 function mapStatusToLabel(status: ReviewStatus): string {
-  if (status === 'request_changes') {
-    return AC_LABELS.CHANGES_REQUESTED;
+  switch (status) {
+    case 'approve':
+      return AC_LABELS.APPROVED;
+    case 'request_changes':
+      return AC_LABELS.CHANGES_REQUESTED;
+    case 'comment':
+      return AC_LABELS.REVIEWED;
   }
-  return AC_LABELS.APPROVED;
 }
 
 async function fetchCurrentLabels(
@@ -87,17 +93,15 @@ async function removeOldACLabels(
 }
 
 /**
- * Syncs PR label based on review status.
- * Removes previous AC labels and applies the appropriate one.
+ * Updates AC label on a PR: removes old AC labels and applies the new one.
+ * Label sync is non-critical, so errors are silently ignored.
  */
-export async function syncPRLabel(
+async function updateACLabel(
   token: string,
   repo: string,
   prNumber: number,
-  status: ReviewStatus
+  newLabel: string
 ): Promise<void> {
-  const newLabel = mapStatusToLabel(status);
-
   try {
     const currentLabels = await fetchCurrentLabels(token, repo, prNumber);
     await removeOldACLabels(token, repo, prNumber, currentLabels, newLabel);
@@ -108,6 +112,19 @@ export async function syncPRLabel(
 }
 
 /**
+ * Syncs PR label based on review status.
+ * Removes previous AC labels and applies the appropriate one.
+ */
+export async function syncPRLabel(
+  token: string,
+  repo: string,
+  prNumber: number,
+  status: ReviewStatus
+): Promise<void> {
+  await updateACLabel(token, repo, prNumber, mapStatusToLabel(status));
+}
+
+/**
  * Marks PR as needing re-review after new commits are pushed.
  */
 export async function markPRNeedsRereview(
@@ -115,11 +132,5 @@ export async function markPRNeedsRereview(
   repo: string,
   prNumber: number
 ): Promise<void> {
-  try {
-    const currentLabels = await fetchCurrentLabels(token, repo, prNumber);
-    await removeOldACLabels(token, repo, prNumber, currentLabels, AC_LABELS.NEEDS_REREVIEW);
-    await addLabel(token, repo, prNumber, AC_LABELS.NEEDS_REREVIEW);
-  } catch {
-    // Label sync is non-critical, fail silently
-  }
+  await updateACLabel(token, repo, prNumber, AC_LABELS.NEEDS_REREVIEW);
 }
