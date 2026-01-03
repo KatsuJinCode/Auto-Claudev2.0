@@ -1677,6 +1677,33 @@ export function registerWorktreeHandlers(
                 planStatus = 'completed';
                 message = 'Changes merged successfully';
                 staged = false;
+
+                // Clean up worktree after successful full merge (fixes #243)
+                // This allows drag-to-Done workflow since TASK_UPDATE_STATUS blocks 'done' when worktree exists
+                try {
+                  if (existsSync(worktreePath)) {
+                    execFileSync(getToolPath('git'), ['worktree', 'remove', '--force', worktreePath], {
+                      cwd: project.path,
+                      encoding: 'utf-8'
+                    });
+                    debug('Worktree cleaned up after full merge:', worktreePath);
+
+                    // Also delete the task branch since we merged successfully
+                    const taskBranch = `auto-claude/${task.specId}`;
+                    try {
+                      execFileSync(getToolPath('git'), ['branch', '-D', taskBranch], {
+                        cwd: project.path,
+                        encoding: 'utf-8'
+                      });
+                      debug('Task branch deleted:', taskBranch);
+                    } catch {
+                      // Branch might not exist or already deleted
+                    }
+                  }
+                } catch (cleanupErr) {
+                  debug('Worktree cleanup failed (non-fatal):', cleanupErr);
+                  // Non-fatal - merge succeeded, cleanup can be done manually
+                }
               }
 
               debug('Merge result. isStageOnly:', isStageOnly, 'newStatus:', newStatus, 'staged:', staged);
