@@ -678,12 +678,14 @@ const TERMINAL_DETECTION: Partial<Record<SupportedTerminal, { name: string; path
  */
 
 /**
- * Escape single quotes in a path for use in AppleScript strings
- * This prevents command injection via malicious directory names
+ * Escape single quotes in a path for safe use in single-quoted shell/script strings.
+ * Works for both AppleScript and shell (bash/sh) contexts.
+ * This prevents command injection via malicious directory names.
  */
-function escapeAppleScriptPath(dirPath: string): string {
-  // In AppleScript, single quotes are escaped by ending the string,
-  // adding an escaped quote, and starting a new string: ' -> '\''
+function escapeSingleQuotedPath(dirPath: string): string {
+  // Single quotes are escaped by ending the string, adding an escaped quote,
+  // and starting a new string: ' -> '\''
+  // This pattern works in both AppleScript and POSIX shells (bash, sh, zsh)
   return dirPath.replace(/'/g, "'\\''");
 }
 
@@ -1073,8 +1075,8 @@ async function openInTerminal(dirPath: string, terminal: SupportedTerminal, cust
 
     if (platform === 'darwin') {
       // macOS: Use open command with the directory
-      // Escape single quotes in dirPath to prevent AppleScript injection
-      const escapedPath = escapeAppleScriptPath(dirPath);
+      // Escape single quotes in dirPath to prevent script injection
+      const escapedPath = escapeSingleQuotedPath(dirPath);
 
       if (terminal === 'system') {
         // Use AppleScript to open Terminal.app at the directory
@@ -1116,7 +1118,7 @@ async function openInTerminal(dirPath: string, terminal: SupportedTerminal, cust
           } catch {
             // xterm doesn't have --working-directory, use -e with a script
             // Escape the path for shell use within the xterm command
-            const escapedPath = escapeAppleScriptPath(dirPath);
+            const escapedPath = escapeSingleQuotedPath(dirPath);
             await execFileAsync('xterm', ['-e', `cd '${escapedPath}' && bash`]);
           }
         }
