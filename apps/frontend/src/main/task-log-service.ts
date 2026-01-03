@@ -2,12 +2,11 @@ import path from 'path';
 import { existsSync, readFileSync, watchFile } from 'fs';
 import { EventEmitter } from 'events';
 import type { TaskLogs, TaskLogPhase, TaskLogStreamChunk, TaskPhaseLog } from '../shared/types';
-
-const TASK_WORKTREE_DIR = '.auto-claude/worktrees/tasks';
+import { findTaskWorktree } from './worktree-paths';
 
 function findWorktreeSpecDir(projectPath: string, specId: string, specsRelPath: string): string | null {
-  const worktreePath = path.join(projectPath, TASK_WORKTREE_DIR, specId);
-  if (existsSync(worktreePath)) {
+  const worktreePath = findTaskWorktree(projectPath, specId);
+  if (worktreePath) {
     return path.join(worktreePath, specsRelPath, specId);
   }
   return null;

@@ -12,6 +12,10 @@ import { execFileSync } from 'child_process';
 import { debugLog, debugError } from '../../../shared/utils/debug-logger';
 import { projectStore } from '../../project-store';
 import { parseEnvFile } from '../utils';
+import {
+  getTerminalWorktreeDir,
+  getTerminalWorktreePath,
+} from '../../worktree-paths';
 
 // Shared validation regex for worktree names - lowercase alphanumeric with dashes/underscores
 // Must start and end with alphanumeric character
@@ -28,16 +32,7 @@ function isValidProjectPath(projectPath: string): boolean {
   return projects.some(p => p.path === projectPath);
 }
 
-const TERMINAL_WORKTREE_DIR = '.auto-claude/worktrees/terminal';
 const MAX_TERMINAL_WORKTREES = 12;
-
-function getTerminalWorktreeDir(projectPath: string): string {
-  return path.join(projectPath, TERMINAL_WORKTREE_DIR);
-}
-
-function getTerminalWorktreePath(projectPath: string, name: string): string {
-  return path.join(projectPath, TERMINAL_WORKTREE_DIR, name);
-}
 
 /**
  * Get the default branch from project settings OR env config
@@ -314,15 +309,20 @@ async function removeTerminalWorktree(
     }
 
     if (deleteBranch && config.hasGitBranch && config.branchName) {
-      try {
-        execFileSync('git', ['branch', '-D', config.branchName], {
-          cwd: projectPath,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        debugLog('[TerminalWorktree] Deleted branch:', config.branchName);
-      } catch {
-        debugLog('[TerminalWorktree] Branch not found or already deleted:', config.branchName);
+      // Re-validate branch name from config file (defense in depth - config could be modified)
+      if (!GIT_BRANCH_REGEX.test(config.branchName)) {
+        debugError('[TerminalWorktree] Invalid branch name in config:', config.branchName);
+      } else {
+        try {
+          execFileSync('git', ['branch', '-D', config.branchName], {
+            cwd: projectPath,
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          debugLog('[TerminalWorktree] Deleted branch:', config.branchName);
+        } catch {
+          debugLog('[TerminalWorktree] Branch not found or already deleted:', config.branchName);
+        }
       }
     }
 

@@ -15,14 +15,7 @@ import {
   persistPlanStatusSync,
   createPlanIfNotExists
 } from './plan-file-utils';
-
-const TASK_WORKTREE_DIR = '.auto-claude/worktrees/tasks';
-
-function findTaskWorktreePath(projectPath: string, specId: string): string | null {
-  const worktreePath = path.join(projectPath, TASK_WORKTREE_DIR, specId);
-  if (existsSync(worktreePath)) return worktreePath;
-  return null;
-}
+import { findTaskWorktree } from '../../worktree-paths';
 
 /**
  * Atomic file write to prevent TOCTOU race conditions.
@@ -340,7 +333,7 @@ export function registerTaskExecutionHandlers(
       );
 
       // Check if worktree exists - QA needs to run in the worktree where the build happened
-      const worktreePath = findTaskWorktreePath(project.path, task.specId);
+      const worktreePath = findTaskWorktree(project.path, task.specId);
       const worktreeSpecDir = worktreePath ? path.join(worktreePath, specsBaseDir, task.specId) : null;
       const hasWorktree = worktreePath !== null;
 
@@ -462,7 +455,7 @@ export function registerTaskExecutionHandlers(
       // UNLESS there's no worktree (limbo state - already merged/discarded or failed)
       if (status === 'done') {
         // Check if worktree exists (task.specId matches worktree folder name)
-        const worktreePath = findTaskWorktreePath(project.path, task.specId);
+        const worktreePath = findTaskWorktree(project.path, task.specId);
         const hasWorktree = worktreePath !== null;
 
         if (hasWorktree) {

@@ -12,22 +12,10 @@ import { findTaskAndProject } from './shared';
 import { parsePythonCommand } from '../../python-detector';
 import { getToolPath } from '../../cli-tool-manager';
 import { promisify } from 'util';
-
-const TASK_WORKTREE_DIR = '.auto-claude/worktrees/tasks';
-
-function getTaskWorktreeDir(projectPath: string): string {
-  return path.join(projectPath, TASK_WORKTREE_DIR);
-}
-
-function getTaskWorktreePath(projectPath: string, specId: string): string {
-  return path.join(projectPath, TASK_WORKTREE_DIR, specId);
-}
-
-function findTaskWorktree(projectPath: string, specId: string): string | null {
-  const worktreePath = path.join(projectPath, TASK_WORKTREE_DIR, specId);
-  if (existsSync(worktreePath)) return worktreePath;
-  return null;
-}
+import {
+  getTaskWorktreeDir,
+  findTaskWorktree,
+} from '../../worktree-paths';
 
 /**
  * Read utility feature settings (for commit message, merge resolver) from settings file
