@@ -822,14 +822,17 @@ class GHClient:
 
         Returns:
             Dict with:
-            - checks: List of check runs with name, status, conclusion
+            - checks: List of check runs with name, state
             - passing: Number of passing checks
             - failing: Number of failing checks
             - pending: Number of pending checks
             - failed_checks: List of failed check names
         """
         try:
-            args = ["pr", "checks", str(pr_number), "--json", "name,state,conclusion"]
+            # Note: gh pr checks --json only supports: bucket, completedAt, description,
+            # event, link, name, startedAt, state, workflow
+            # The 'state' field directly contains the result (SUCCESS, FAILURE, PENDING, etc.)
+            args = ["pr", "checks", str(pr_number), "--json", "name,state"]
             args = self._add_repo_flag(args)
 
             result = await self.run(args, timeout=30.0)
@@ -842,15 +845,14 @@ class GHClient:
 
             for check in checks:
                 state = check.get("state", "").upper()
-                conclusion = check.get("conclusion", "").upper()
                 name = check.get("name", "Unknown")
 
-                if state == "COMPLETED":
-                    if conclusion in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-                        passing += 1
-                    elif conclusion in ("FAILURE", "TIMED_OUT", "CANCELLED"):
-                        failing += 1
-                        failed_checks.append(name)
+                # gh pr checks 'state' directly contains: SUCCESS, FAILURE, PENDING, NEUTRAL, etc.
+                if state in ("SUCCESS", "NEUTRAL", "SKIPPED"):
+                    passing += 1
+                elif state in ("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"):
+                    failing += 1
+                    failed_checks.append(name)
                 else:
                     # PENDING, QUEUED, IN_PROGRESS, etc.
                     pending += 1
@@ -979,7 +981,10 @@ class GHClient:
         return commits
 
     async def get_pr_files_changed_since(
-        self, pr_number: int, base_sha: str
+        self,
+        pr_number: int,
+        base_sha: str,
+        reviewed_file_blobs: dict[str, str] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Get files and commits that are part of the PR and changed since a specific commit.
@@ -989,13 +994,19 @@ class GHClient:
         2. Getting the canonical list of PR commits (excludes commits from merged branches)
         3. Filtering to only include commits after base_sha
 
+        When a rebase/force-push is detected (base_sha not found in commits), and
+        reviewed_file_blobs is provided, uses blob SHA comparison to identify which
+        files actually changed content. This prevents re-reviewing unchanged files.
+
         Args:
             pr_number: PR number
             base_sha: The commit SHA to compare from (e.g., last reviewed commit)
+            reviewed_file_blobs: Optional dict mapping filename -> blob SHA from the
+                previous review. Used as fallback when base_sha is not found (rebase).
 
         Returns:
             Tuple of:
-            - List of file objects that are part of the PR
+            - List of file objects that are part of the PR (filtered if blob comparison used)
             - List of commit objects that are part of the PR and after base_sha
         """
         # Get PR's canonical files (these are the actual PR changes)
@@ -1020,15 +1031,53 @@ class GHClient:
         # Commits after base_sha (these are the new commits to review)
         if base_index >= 0:
             new_commits = pr_commits[base_index + 1 :]
-        else:
-            # base_sha not found in PR commits - this can happen if:
-            # 1. The base_sha was from a merge commit (not a direct PR commit)
-            # 2. The PR was rebased/force-pushed
-            # In this case, return all PR commits as we can't determine what's new
-            logger.warning(
-                f"base_sha {base_sha[:8]} not found in PR #{pr_number} commits. "
-                "Returning all PR commits."
-            )
-            new_commits = pr_commits
+            return pr_files, new_commits
 
-        return pr_files, new_commits
+        # base_sha not found in PR commits - this happens when:
+        # 1. The base_sha was from a merge commit (not a direct PR commit)
+        # 2. The PR was rebased/force-pushed
+        logger.warning(
+            f"base_sha {base_sha[:8]} not found in PR #{pr_number} commits. "
+            "PR was likely rebased or force-pushed."
+        )
+
+        # If we have blob SHAs from the previous review, use them to filter files
+        # Blob SHAs persist across rebases - same content = same blob SHA
+        if reviewed_file_blobs:  # Only use blob comparison if we have actual blob data
+            changed_files = []
+            unchanged_count = 0
+            for file in pr_files:
+                filename = file.get("filename", "")
+                current_blob_sha = file.get("sha", "")
+                file_status = file.get("status", "")
+                previous_blob_sha = reviewed_file_blobs.get(filename, "")
+
+                # Always include files that were added, removed, or renamed
+                # These are significant changes regardless of blob SHA
+                if file_status in ("added", "removed", "renamed"):
+                    changed_files.append(file)
+                elif not previous_blob_sha:
+                    # File wasn't in previous review - include it
+                    changed_files.append(file)
+                elif current_blob_sha != previous_blob_sha:
+                    # File content changed - include it
+                    changed_files.append(file)
+                else:
+                    # Same blob SHA = same content - skip it
+                    unchanged_count += 1
+
+            if unchanged_count > 0:
+                logger.info(
+                    f"Blob comparison: {len(changed_files)} files changed, "
+                    f"{unchanged_count} unchanged (skipped)"
+                )
+
+            # Return filtered files but all commits (can't filter commits after rebase)
+            return changed_files, pr_commits
+
+        # No blob data available - return all files and commits
+        logger.warning(
+            "No reviewed_file_blobs available for blob comparison. "
+            "Returning all PR files."
+        )
+        return pr_files, pr_commits

@@ -1059,13 +1059,16 @@ class FollowupContextGatherer:
         # Get PR-scoped files and commits (excludes merge-introduced changes)
         # This solves the problem where merging develop into a feature branch
         # would include commits from other PRs in the follow-up review.
+        # Pass reviewed_file_blobs for rebase-resistant comparison
+        reviewed_file_blobs = getattr(self.previous_review, "reviewed_file_blobs", {})
         try:
             pr_files, new_commits = await self.gh_client.get_pr_files_changed_since(
-                self.pr_number, previous_sha
+                self.pr_number, previous_sha, reviewed_file_blobs=reviewed_file_blobs
             )
             print(
-                f"[Followup] PR has {len(pr_files)} files total, "
-                f"{len(new_commits)} commits since last review",
+                f"[Followup] PR has {len(pr_files)} files, "
+                f"{len(new_commits)} commits since last review"
+                + (" (blob comparison used)" if reviewed_file_blobs else ""),
                 flush=True,
             )
         except Exception as e:
