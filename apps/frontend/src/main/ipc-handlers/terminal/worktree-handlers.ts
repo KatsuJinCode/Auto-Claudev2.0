@@ -7,11 +7,26 @@ import type {
   TerminalWorktreeResult,
 } from '../../../shared/types';
 import path from 'path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'fs';
-import { execSync } from 'child_process';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { debugLog, debugError } from '../../../shared/utils/debug-logger';
 import { projectStore } from '../../project-store';
 import { parseEnvFile } from '../utils';
+
+// Shared validation regex for worktree names - lowercase alphanumeric with dashes/underscores
+// Must start and end with alphanumeric character
+const WORKTREE_NAME_REGEX = /^[a-z0-9][a-z0-9_-]*[a-z0-9]$|^[a-z0-9]$/;
+
+// Validation regex for git branch names - allows alphanumeric, dots, slashes, dashes, underscores
+const GIT_BRANCH_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
+
+/**
+ * Validate that projectPath is a registered project
+ */
+function isValidProjectPath(projectPath: string): boolean {
+  const projects = projectStore.getProjects();
+  return projects.some(p => p.path === projectPath);
+}
 
 const TERMINAL_WORKTREE_DIR = '.auto-claude/worktrees/terminal';
 const MAX_TERMINAL_WORKTREES = 12;
@@ -50,7 +65,7 @@ function getDefaultBranch(projectPath: string): string {
 
   for (const branch of ['main', 'master']) {
     try {
-      execSync(`git rev-parse --verify ${branch}`, {
+      execFileSync('git', ['rev-parse', '--verify', branch], {
         cwd: projectPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -62,12 +77,19 @@ function getDefaultBranch(projectPath: string): string {
     }
   }
 
-  const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-    cwd: projectPath,
-    encoding: 'utf-8',
-  }).trim();
-  debugLog('[TerminalWorktree] Falling back to current branch:', currentBranch);
-  return currentBranch;
+  // Fallback to current branch - wrap in try-catch
+  try {
+    const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    debugLog('[TerminalWorktree] Falling back to current branch:', currentBranch);
+    return currentBranch;
+  } catch (error) {
+    debugError('[TerminalWorktree] Error detecting current branch:', error);
+    return 'main'; // Safe default
+  }
 }
 
 function saveWorktreeConfig(worktreePath: string, config: TerminalWorktreeConfig): void {
@@ -79,7 +101,8 @@ function loadWorktreeConfig(worktreePath: string): TerminalWorktreeConfig | null
   if (existsSync(configPath)) {
     try {
       return JSON.parse(readFileSync(configPath, 'utf-8'));
-    } catch {
+    } catch (error) {
+      debugError('[TerminalWorktree] Corrupted config.json in:', configPath, error);
       return null;
     }
   }
@@ -93,10 +116,27 @@ async function createTerminalWorktree(
 
   debugLog('[TerminalWorktree] Creating worktree:', { name, taskId, createGitBranch, projectPath, customBaseBranch });
 
-  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+  // Validate projectPath against registered projects
+  if (!isValidProjectPath(projectPath)) {
     return {
       success: false,
-      error: 'Invalid worktree name. Use only letters, numbers, dashes, and underscores.',
+      error: 'Invalid project path',
+    };
+  }
+
+  // Validate worktree name - use shared regex (lowercase only)
+  if (!WORKTREE_NAME_REGEX.test(name)) {
+    return {
+      success: false,
+      error: 'Invalid worktree name. Use lowercase letters, numbers, dashes, and underscores. Must start and end with alphanumeric.',
+    };
+  }
+
+  // CRITICAL: Validate customBaseBranch to prevent command injection
+  if (customBaseBranch && !GIT_BRANCH_REGEX.test(customBaseBranch)) {
+    return {
+      success: false,
+      error: 'Invalid base branch name',
     };
   }
 
@@ -110,6 +150,7 @@ async function createTerminalWorktree(
 
   const worktreePath = getTerminalWorktreePath(projectPath, name);
   const branchName = `terminal/${name}`;
+  let directoryCreated = false;
 
   try {
     if (existsSync(worktreePath)) {
@@ -117,13 +158,14 @@ async function createTerminalWorktree(
     }
 
     mkdirSync(getTerminalWorktreeDir(projectPath), { recursive: true });
+    directoryCreated = true;
 
     // Use custom base branch if provided, otherwise detect default
     const baseBranch = customBaseBranch || getDefaultBranch(projectPath);
     debugLog('[TerminalWorktree] Using base branch:', baseBranch, customBaseBranch ? '(custom)' : '(default)');
 
     try {
-      execSync(`git fetch origin ${baseBranch}`, {
+      execFileSync('git', ['fetch', 'origin', baseBranch], {
         cwd: projectPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -135,7 +177,7 @@ async function createTerminalWorktree(
 
     let baseRef = baseBranch;
     try {
-      execSync(`git rev-parse --verify origin/${baseBranch}`, {
+      execFileSync('git', ['rev-parse', '--verify', `origin/${baseBranch}`], {
         cwd: projectPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -147,14 +189,14 @@ async function createTerminalWorktree(
     }
 
     if (createGitBranch) {
-      execSync(`git worktree add -b "${branchName}" "${worktreePath}" "${baseRef}"`, {
+      execFileSync('git', ['worktree', 'add', '-b', branchName, worktreePath, baseRef], {
         cwd: projectPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       debugLog('[TerminalWorktree] Created worktree with branch:', branchName, 'from', baseRef);
     } else {
-      execSync(`git worktree add --detach "${worktreePath}" "${baseRef}"`, {
+      execFileSync('git', ['worktree', 'add', '--detach', worktreePath, baseRef], {
         cwd: projectPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -179,6 +221,17 @@ async function createTerminalWorktree(
     return { success: true, config };
   } catch (error) {
     debugError('[TerminalWorktree] Error creating worktree:', error);
+
+    // Cleanup: remove the worktree directory if git worktree creation failed
+    if (directoryCreated && existsSync(worktreePath)) {
+      try {
+        rmSync(worktreePath, { recursive: true, force: true });
+        debugLog('[TerminalWorktree] Cleaned up failed worktree directory:', worktreePath);
+      } catch (cleanupError) {
+        debugError('[TerminalWorktree] Failed to cleanup worktree directory:', cleanupError);
+      }
+    }
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create worktree',
@@ -187,6 +240,12 @@ async function createTerminalWorktree(
 }
 
 async function listTerminalWorktrees(projectPath: string): Promise<TerminalWorktreeConfig[]> {
+  // Validate projectPath against registered projects
+  if (!isValidProjectPath(projectPath)) {
+    debugError('[TerminalWorktree] Invalid project path for listing:', projectPath);
+    return [];
+  }
+
   const configs: TerminalWorktreeConfig[] = [];
   const worktreeDir = getTerminalWorktreeDir(projectPath);
 
@@ -216,6 +275,16 @@ async function removeTerminalWorktree(
 ): Promise<IPCResult> {
   debugLog('[TerminalWorktree] Removing worktree:', { name, deleteBranch, projectPath });
 
+  // Validate projectPath against registered projects
+  if (!isValidProjectPath(projectPath)) {
+    return { success: false, error: 'Invalid project path' };
+  }
+
+  // Validate worktree name to prevent path traversal
+  if (!WORKTREE_NAME_REGEX.test(name)) {
+    return { success: false, error: 'Invalid worktree name' };
+  }
+
   const worktreePath = getTerminalWorktreePath(projectPath, name);
   const config = loadWorktreeConfig(worktreePath);
 
@@ -225,7 +294,7 @@ async function removeTerminalWorktree(
 
   try {
     if (existsSync(worktreePath)) {
-      execSync(`git worktree remove --force "${worktreePath}"`, {
+      execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
         cwd: projectPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -235,7 +304,7 @@ async function removeTerminalWorktree(
 
     if (deleteBranch && config.hasGitBranch && config.branchName) {
       try {
-        execSync(`git branch -D "${config.branchName}"`, {
+        execFileSync('git', ['branch', '-D', config.branchName], {
           cwd: projectPath,
           encoding: 'utf-8',
           stdio: ['pipe', 'pipe', 'pipe'],

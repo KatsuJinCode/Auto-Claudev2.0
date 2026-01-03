@@ -5,6 +5,7 @@ import { FileDown } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTerminalStore } from '../stores/terminal-store';
 import { useSettingsStore } from '../stores/settings-store';
+import { useToast } from '../hooks/use-toast';
 import type { TerminalProps } from './terminal/types';
 import type { TerminalWorktreeConfig } from '../../shared/types';
 import { TerminalHeader } from './terminal/TerminalHeader';
@@ -44,6 +45,9 @@ export function Terminal({
   // Settings store for IDE preferences
   const { settings } = useSettingsStore();
 
+  // Toast for user feedback
+  const { toast } = useToast();
+
   const associatedTask = terminal?.associatedTaskId
     ? tasks.find((t) => t.id === terminal.associatedTaskId)
     : undefined;
@@ -81,7 +85,7 @@ export function Terminal({
   });
 
   // Create PTY process
-  const { resetForRecreate } = usePtyProcess({
+  const { prepareForRecreate, resetForRecreate } = usePtyProcess({
     terminalId: id,
     cwd: effectiveCwd,
     projectPath,
@@ -173,6 +177,10 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
   }, []);
 
   const handleWorktreeCreated = useCallback(async (config: TerminalWorktreeConfig) => {
+    // IMPORTANT: Set isCreatingRef BEFORE updating the store to prevent race condition
+    // This prevents the PTY effect from running before destroyTerminal completes
+    prepareForRecreate();
+
     // Update terminal store with worktree config
     setWorktreeConfig(id, config);
 
@@ -185,12 +193,14 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
       isCreatedRef.current = false;
     }
 
-    // Reset the usePtyProcess hook's internal refs to allow recreation
-    // The effect will trigger because effectiveCwd has changed (reads from store)
+    // Reset refs to allow recreation - effect will now trigger with new cwd
     resetForRecreate();
-  }, [id, setWorktreeConfig, updateTerminal, resetForRecreate]);
+  }, [id, setWorktreeConfig, updateTerminal, prepareForRecreate, resetForRecreate]);
 
   const handleSelectWorktree = useCallback(async (config: TerminalWorktreeConfig) => {
+    // IMPORTANT: Set isCreatingRef BEFORE updating the store to prevent race condition
+    prepareForRecreate();
+
     // Same logic as handleWorktreeCreated - attach terminal to existing worktree
     setWorktreeConfig(id, config);
     updateTerminal(id, { title: config.name, cwd: config.worktreePath });
@@ -202,7 +212,7 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
     }
 
     resetForRecreate();
-  }, [id, setWorktreeConfig, updateTerminal, resetForRecreate]);
+  }, [id, setWorktreeConfig, updateTerminal, prepareForRecreate, resetForRecreate]);
 
   const handleOpenInIDE = useCallback(async () => {
     const worktreePath = terminal?.worktreeConfig?.worktreePath;
@@ -217,8 +227,13 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
       );
     } catch (err) {
       console.error('Failed to open in IDE:', err);
+      toast({
+        title: 'Failed to open IDE',
+        description: err instanceof Error ? err.message : 'Could not launch IDE',
+        variant: 'destructive',
+      });
     }
-  }, [terminal?.worktreeConfig?.worktreePath, settings.preferredIDE, settings.customIDEPath]);
+  }, [terminal?.worktreeConfig?.worktreePath, settings.preferredIDE, settings.customIDEPath, toast]);
 
   // Get backlog tasks for worktree dialog
   const backlogTasks = tasks.filter((t) => t.status === 'backlog');
