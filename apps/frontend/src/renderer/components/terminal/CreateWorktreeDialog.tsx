@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '../ui/select';
 import type { Task, TerminalWorktreeConfig } from '../../../shared/types';
+import { useProjectStore } from '../../stores/project-store';
 
 // Special value to represent "use project default" since Radix UI Select doesn't allow empty string values
 const PROJECT_DEFAULT_BRANCH = '__project_default__';
@@ -55,6 +56,11 @@ export function CreateWorktreeDialog({
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Get project settings for default branch
+  const project = useProjectStore((state) =>
+    state.projects.find((p) => p.path === projectPath)
+  );
+
   // Branch selection state
   const [branches, setBranches] = useState<string[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = useState(false);
@@ -72,10 +78,15 @@ export function CreateWorktreeDialog({
             setBranches(result.data);
           }
 
-          // Also get the detected default branch
-          const defaultResult = await window.electronAPI.detectMainBranch(projectPath);
-          if (defaultResult.success && defaultResult.data) {
-            setProjectDefaultBranch(defaultResult.data);
+          // Use project settings mainBranch if available, otherwise auto-detect
+          if (project?.settings?.mainBranch) {
+            setProjectDefaultBranch(project.settings.mainBranch);
+          } else {
+            // Fallback to auto-detect if no project setting
+            const defaultResult = await window.electronAPI.detectMainBranch(projectPath);
+            if (defaultResult.success && defaultResult.data) {
+              setProjectDefaultBranch(defaultResult.data);
+            }
           }
         } catch (err) {
           console.error('Failed to fetch branches:', err);
@@ -85,7 +96,7 @@ export function CreateWorktreeDialog({
       };
       fetchBranches();
     }
-  }, [open, projectPath]);
+  }, [open, projectPath, project?.settings?.mainBranch]);
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     // Auto-sanitize: lowercase, replace spaces and invalid chars

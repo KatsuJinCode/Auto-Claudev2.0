@@ -7,6 +7,7 @@ import { cn } from '../../lib/utils';
 import { STATUS_COLORS } from './types';
 import { TerminalTitle } from './TerminalTitle';
 import { TaskSelector } from './TaskSelector';
+import { WorktreeSelector } from './WorktreeSelector';
 
 interface TerminalHeaderProps {
   terminalId: string;
@@ -28,6 +29,8 @@ interface TerminalHeaderProps {
   projectPath?: string;
   /** Callback to open worktree creation dialog */
   onCreateWorktree?: () => void;
+  /** Callback when an existing worktree is selected */
+  onSelectWorktree?: (config: TerminalWorktreeConfig) => void;
   /** Callback to open worktree in IDE */
   onOpenInIDE?: () => void;
 }
@@ -49,6 +52,7 @@ export function TerminalHeader({
   worktreeConfig,
   projectPath,
   onCreateWorktree,
+  onSelectWorktree,
   onOpenInIDE,
 }: TerminalHeaderProps) {
   const { t } = useTranslation(['terminal', 'common']);
@@ -92,20 +96,15 @@ export function TerminalHeader({
         )}
       </div>
       <div className="flex items-center gap-1">
-        {/* Worktree button when no worktree and project path available */}
-        {!worktreeConfig && projectPath && onCreateWorktree && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs gap-1 hover:bg-amber-500/10 hover:text-amber-500"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCreateWorktree();
-            }}
-          >
-            <FolderGit className="h-3 w-3" />
-            {t('terminal:worktree.create')}
-          </Button>
+        {/* Worktree selector when no worktree and project path available */}
+        {!worktreeConfig && projectPath && onCreateWorktree && onSelectWorktree && (
+          <WorktreeSelector
+            terminalId={terminalId}
+            projectPath={projectPath}
+            currentWorktree={worktreeConfig}
+            onCreateWorktree={onCreateWorktree}
+            onSelectWorktree={onSelectWorktree}
+          />
         )}
         {/* Open in IDE button when worktree exists */}
         {worktreeConfig && onOpenInIDE && (

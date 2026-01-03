@@ -38,6 +38,9 @@ export function Terminal({
   const setAssociatedTask = useTerminalStore((state) => state.setAssociatedTask);
   const setWorktreeConfig = useTerminalStore((state) => state.setWorktreeConfig);
 
+  // Use cwd from store if available (for worktree), otherwise use prop
+  const effectiveCwd = terminal?.cwd || cwd;
+
   // Settings store for IDE preferences
   const { settings } = useSettingsStore();
 
@@ -54,7 +57,7 @@ export function Terminal({
   // Auto-naming functionality
   const { handleCommandEnter, cleanup: cleanupAutoNaming } = useAutoNaming({
     terminalId: id,
-    cwd,
+    cwd: effectiveCwd,
   });
 
   // Initialize xterm with command tracking
@@ -78,9 +81,9 @@ export function Terminal({
   });
 
   // Create PTY process
-  usePtyProcess({
+  const { resetForRecreate } = usePtyProcess({
     terminalId: id,
-    cwd,
+    cwd: effectiveCwd,
     projectPath,
     cols,
     rows,
@@ -130,8 +133,8 @@ export function Terminal({
 
   const handleInvokeClaude = useCallback(() => {
     setClaudeMode(id, true);
-    window.electronAPI.invokeClaudeInTerminal(id, cwd);
-  }, [id, cwd, setClaudeMode]);
+    window.electronAPI.invokeClaudeInTerminal(id, effectiveCwd);
+  }, [id, effectiveCwd, setClaudeMode]);
 
   const handleClick = useCallback(() => {
     onActivate();
@@ -173,16 +176,33 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
     // Update terminal store with worktree config
     setWorktreeConfig(id, config);
 
-    // Update terminal title to worktree name
+    // Update terminal title and cwd to worktree path
     updateTerminal(id, { title: config.name, cwd: config.worktreePath });
 
-    // Destroy current PTY and create new one in worktree directory
-    // The PTY will be recreated by the usePtyProcess hook when cwd changes
+    // Destroy current PTY - a new one will be created in the worktree directory
     if (isCreatedRef.current) {
       await window.electronAPI.destroyTerminal(id);
       isCreatedRef.current = false;
     }
-  }, [id, setWorktreeConfig, updateTerminal]);
+
+    // Reset the usePtyProcess hook's internal refs to allow recreation
+    // The effect will trigger because effectiveCwd has changed (reads from store)
+    resetForRecreate();
+  }, [id, setWorktreeConfig, updateTerminal, resetForRecreate]);
+
+  const handleSelectWorktree = useCallback(async (config: TerminalWorktreeConfig) => {
+    // Same logic as handleWorktreeCreated - attach terminal to existing worktree
+    setWorktreeConfig(id, config);
+    updateTerminal(id, { title: config.name, cwd: config.worktreePath });
+
+    // Destroy current PTY - a new one will be created in the worktree directory
+    if (isCreatedRef.current) {
+      await window.electronAPI.destroyTerminal(id);
+      isCreatedRef.current = false;
+    }
+
+    resetForRecreate();
+  }, [id, setWorktreeConfig, updateTerminal, resetForRecreate]);
 
   const handleOpenInIDE = useCallback(async () => {
     const worktreePath = terminal?.worktreeConfig?.worktreePath;
@@ -239,6 +259,7 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
         worktreeConfig={terminal?.worktreeConfig}
         projectPath={projectPath}
         onCreateWorktree={handleCreateWorktree}
+        onSelectWorktree={handleSelectWorktree}
         onOpenInIDE={handleOpenInIDE}
       />
 

@@ -1,6 +1,8 @@
 {
   "worktree": {
     "create": "Worktree",
+    "createNew": "+ Nouveau Worktree",
+    "existing": "Worktrees Existants",
     "createTitle": "Creer un Worktree Terminal",
     "createDescription": "Creer un espace de travail isole pour ce terminal. Tout le travail se fera dans le repertoire du worktree.",
     "name": "Nom du Worktree",
