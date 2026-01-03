@@ -1004,16 +1004,16 @@ class GHClient:
         # Get PR's canonical commits
         pr_commits = await self.get_pr_commits(pr_number)
 
-        # Find commits after base_sha
-        # Build a set of PR commit SHAs for fast lookup
-        pr_commit_shas = {c["sha"] for c in pr_commits}
-
         # Find the position of base_sha in PR commits
+        # Use minimum 7-char prefix comparison (git's default short SHA length)
         base_index = -1
+        min_prefix_len = 7
+        base_prefix = (
+            base_sha[:min_prefix_len] if len(base_sha) >= min_prefix_len else base_sha
+        )
         for i, commit in enumerate(pr_commits):
-            if commit["sha"].startswith(base_sha) or base_sha.startswith(
-                commit["sha"][:8]
-            ):
+            commit_prefix = commit["sha"][:min_prefix_len]
+            if commit_prefix == base_prefix:
                 base_index = i
                 break
 

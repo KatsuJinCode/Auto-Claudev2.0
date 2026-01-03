@@ -227,6 +227,17 @@ async function createTerminalWorktree(
       try {
         rmSync(worktreePath, { recursive: true, force: true });
         debugLog('[TerminalWorktree] Cleaned up failed worktree directory:', worktreePath);
+        // Also prune stale worktree registrations in case git worktree add partially succeeded
+        try {
+          execFileSync('git', ['worktree', 'prune'], {
+            cwd: projectPath,
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          debugLog('[TerminalWorktree] Pruned stale worktree registrations');
+        } catch {
+          // Ignore prune errors - not critical
+        }
       } catch (cleanupError) {
         debugError('[TerminalWorktree] Failed to cleanup worktree directory:', cleanupError);
       }
