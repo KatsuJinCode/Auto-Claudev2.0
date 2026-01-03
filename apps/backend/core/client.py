@@ -481,9 +481,14 @@ def create_client(
        (see security.py for ALLOWED_COMMANDS)
     4. Tool filtering - Each agent type only sees relevant tools (prevents misuse)
     """
+    # Track timing for debugging timeout issues
+    client_creation_start = time.time()
+    logger.debug(f"[SDK Timing] Starting client creation for agent_type={agent_type}")
+
     oauth_token = require_auth_token()
     # Ensure SDK can access it via its expected env var
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    logger.debug(f"[SDK Timing] OAuth token set ({(time.time() - client_creation_start)*1000:.1f}ms elapsed)")
 
     # Collect env vars to pass to SDK (ANTHROPIC_BASE_URL, etc.)
     sdk_env = get_sdk_env_vars()
@@ -499,9 +504,11 @@ def create_client(
     # This enables context-aware tool injection based on project type
     # Uses caching to avoid reloading on every create_client() call
     project_index, project_capabilities = _get_cached_project_data(project_dir)
+    logger.debug(f"[SDK Timing] Project capabilities loaded ({(time.time() - client_creation_start)*1000:.1f}ms elapsed)")
 
     # Load per-project MCP configuration from .auto-claude/.env
     mcp_config = load_project_mcp_config(project_dir)
+    logger.debug(f"[SDK Timing] MCP config loaded ({(time.time() - client_creation_start)*1000:.1f}ms elapsed)")
 
     # Get allowed tools using phase-aware configuration
     # This respects AGENT_CONFIGS and only includes tools the agent needs
@@ -754,4 +761,9 @@ def create_client(
     if agents:
         options_kwargs["agents"] = agents
 
-    return ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))
+    logger.debug(f"[SDK Timing] Starting ClaudeSDKClient instantiation ({(time.time() - client_creation_start)*1000:.1f}ms elapsed)")
+    client = ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))
+    total_time_ms = (time.time() - client_creation_start) * 1000
+    logger.debug(f"[SDK Timing] ClaudeSDKClient created successfully (total time: {total_time_ms:.1f}ms)")
+
+    return client

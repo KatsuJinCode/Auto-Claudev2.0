@@ -5,6 +5,8 @@ Agent Runner
 Handles the execution of AI agents for the spec creation pipeline.
 """
 
+import logging
+import time
 from pathlib import Path
 
 # Configure safe encoding before any output (fixes Windows encoding errors)
@@ -20,6 +22,8 @@ from task_logger import (
     LogPhase,
     TaskLogger,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AgentRunner:
@@ -116,12 +120,16 @@ class AgentRunner:
             "Creating Claude SDK client...",
             thinking_budget=thinking_budget,
         )
+        client_start_time = time.time()
+        logger.debug(f"[Agent Timing] Starting SDK client creation for {prompt_file}")
         client = create_client(
             self.project_dir,
             self.spec_dir,
             self.model,
             max_thinking_tokens=thinking_budget,
         )
+        client_creation_time_ms = (time.time() - client_start_time) * 1000
+        logger.debug(f"[Agent Timing] SDK client created in {client_creation_time_ms:.1f}ms")
 
         current_tool = None
         message_count = 0
@@ -130,12 +138,22 @@ class AgentRunner:
         try:
             async with client:
                 debug("agent_runner", "Sending query to Claude SDK...")
+                query_start_time = time.time()
+                logger.debug(f"[Agent Timing] Sending first query to SDK")
                 await client.query(prompt)
+                query_time_ms = (time.time() - query_start_time) * 1000
+                logger.debug(f"[Agent Timing] Query sent in {query_time_ms:.1f}ms")
                 debug_success("agent_runner", "Query sent successfully")
 
                 response_text = ""
                 debug("agent_runner", "Starting to receive response stream...")
+                first_response_received = False
+                response_start_time = time.time()
                 async for msg in client.receive_response():
+                    if not first_response_received:
+                        first_response_time_ms = (time.time() - response_start_time) * 1000
+                        logger.debug(f"[Agent Timing] First response received in {first_response_time_ms:.1f}ms (total: {(time.time() - client_start_time)*1000:.1f}ms from client creation)")
+                        first_response_received = True
                     msg_type = type(msg).__name__
                     message_count += 1
                     debug_detailed(
