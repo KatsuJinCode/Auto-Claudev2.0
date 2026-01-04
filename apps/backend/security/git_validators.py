@@ -2,7 +2,9 @@
 Git Validators
 ==============
 
-Validators for git operations (commit with secret scanning).
+Validators for git operations:
+- Commit with secret scanning
+- Config protection (prevent setting test users)
 """
 
 import shlex
@@ -10,8 +12,102 @@ from pathlib import Path
 
 from .validation_models import ValidationResult
 
+# =============================================================================
+# BLOCKED GIT CONFIG PATTERNS
+# =============================================================================
 
-def validate_git_commit(command_string: str) -> ValidationResult:
+# Git config keys that agents must NOT modify
+# These are identity settings that should inherit from the user's global config
+BLOCKED_GIT_CONFIG_KEYS = {
+    "user.name",
+    "user.email",
+    "author.name",
+    "author.email",
+    "committer.name",
+    "committer.email",
+}
+
+
+def validate_git_config(command_string: str) -> ValidationResult:
+    """
+    Validate git config commands - block identity changes.
+
+    Agents should not set user.name, user.email, etc. as this:
+    1. Breaks commit attribution
+    2. Can create fake "Test User" identities
+    3. Overrides the user's legitimate git identity
+
+    Args:
+        command_string: The full git command string
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    try:
+        tokens = shlex.split(command_string)
+    except ValueError:
+        return True, ""  # Can't parse, let other validators handle it
+
+    if len(tokens) < 2 or tokens[0] != "git" or tokens[1] != "config":
+        return True, ""  # Not a git config command
+
+    # Check for any blocked config keys in the command
+    command_lower = command_string.lower()
+
+    for blocked_key in BLOCKED_GIT_CONFIG_KEYS:
+        if blocked_key in command_lower:
+            return False, (
+                f"BLOCKED: Cannot modify git identity configuration\n\n"
+                f"You attempted to set '{blocked_key}' which is not allowed.\n\n"
+                f"WHY: Git identity (user.name, user.email) must inherit from the user's "
+                f"global git configuration. Setting fake identities like 'Test User' breaks "
+                f"commit attribution and causes serious issues.\n\n"
+                f"WHAT TO DO: Simply commit without setting any user configuration. "
+                f"The repository will use the correct identity automatically."
+            )
+
+    return True, ""
+
+
+def validate_git_command(command_string: str) -> ValidationResult:
+    """
+    Main git validator that checks all git security rules.
+
+    Currently validates:
+    - git config: Block identity changes
+    - git commit: Run secret scanning
+
+    Args:
+        command_string: The full git command string
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    try:
+        tokens = shlex.split(command_string)
+    except ValueError:
+        return False, "Could not parse git command"
+
+    if not tokens or tokens[0] != "git":
+        return True, ""
+
+    if len(tokens) < 2:
+        return True, ""  # Just "git" with no subcommand
+
+    subcommand = tokens[1]
+
+    # Check git config commands
+    if subcommand == "config":
+        return validate_git_config(command_string)
+
+    # Check git commit commands (secret scanning)
+    if subcommand == "commit":
+        return validate_git_commit_secrets(command_string)
+
+    return True, ""
+
+
+def validate_git_commit_secrets(command_string: str) -> ValidationResult:
     """
     Validate git commit commands - run secret scan before allowing commit.
 
@@ -99,3 +195,8 @@ def validate_git_commit(command_string: str) -> ValidationResult:
     )
 
     return False, "\n".join(error_lines)
+
+
+# Backwards compatibility alias - the registry uses this name
+# Now delegates to the comprehensive validator
+validate_git_commit = validate_git_command

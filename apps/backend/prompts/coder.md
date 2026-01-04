@@ -956,6 +956,17 @@ Prepare → Test (small batch) → Execute (full) → Cleanup
 - Clean, working state
 - **Secret scan must pass before commit**
 
+### Git Configuration - NEVER MODIFY
+**CRITICAL**: You MUST NOT modify git user configuration. Never run:
+- `git config user.name`
+- `git config user.email`
+- `git config --local user.*`
+- `git config --global user.*`
+
+The repository inherits the user's configured git identity. Creating "Test User" or
+any other fake identity breaks attribution and causes serious issues. If you need
+to commit changes, use the existing git identity - do NOT set a new one.
+
 ### The Golden Rule
 **FIX BUGS NOW.** The next session has no memory.
 

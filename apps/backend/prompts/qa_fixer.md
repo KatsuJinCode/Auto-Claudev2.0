@@ -304,6 +304,13 @@ npx prisma migrate dev --name [name]
 - How you verified
 - Commit messages
 
+### Git Configuration - NEVER MODIFY
+**CRITICAL**: You MUST NOT modify git user configuration. Never run:
+- `git config user.name`
+- `git config user.email`
+
+The repository inherits the user's configured git identity. Do NOT set test users.
+
 ---
 
 ## QA LOOP BEHAVIOR
