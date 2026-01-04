@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useDroppable } from '@dnd-kit/core';
+import { useDroppable, useDndContext } from '@dnd-kit/core';
 import '@xterm/xterm/css/xterm.css';
 import { FileDown } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -24,7 +24,9 @@ export function Terminal({
   onActivate,
   tasks = [],
   onNewTaskClick,
-  terminalCount = 1
+  terminalCount = 1,
+  dragHandleListeners,
+  isDragging,
 }: TerminalProps) {
   const isMountedRef = useRef(true);
   const isCreatedRef = useRef(false);
@@ -57,6 +59,12 @@ export function Terminal({
     id: `terminal-${id}`,
     data: { type: 'terminal', terminalId: id }
   });
+
+  // Check if a terminal is being dragged (vs a file)
+  const { active } = useDndContext();
+  const isDraggingTerminal = active?.data.current?.type === 'terminal-panel';
+  // Only show file drop overlay when dragging files, not terminals
+  const showFileDropOverlay = isOver && !isDraggingTerminal;
 
   // Auto-naming functionality
   const { handleCommandEnter, cleanup: cleanupAutoNaming } = useAutoNaming({
@@ -189,6 +197,8 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
 
     // Update terminal store with worktree config
     setWorktreeConfig(id, config);
+    // Sync to main process so worktree config persists across hot reloads
+    window.electronAPI.setTerminalWorktreeConfig(id, config);
 
     // Update terminal title and cwd to worktree path
     updateTerminal(id, { title: config.name, cwd: config.worktreePath });
@@ -211,6 +221,8 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
 
     // Same logic as handleWorktreeCreated - attach terminal to existing worktree
     setWorktreeConfig(id, config);
+    // Sync to main process so worktree config persists across hot reloads
+    window.electronAPI.setTerminalWorktreeConfig(id, config);
     updateTerminal(id, { title: config.name, cwd: config.worktreePath });
     // Sync to main process so title persists across hot reloads
     window.electronAPI.setTerminalTitle(id, config.name);
@@ -254,11 +266,11 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
       className={cn(
         'flex h-full flex-col rounded-lg border bg-[#0B0B0F] overflow-hidden transition-all relative',
         isActive ? 'border-primary ring-1 ring-primary/20' : 'border-border',
-        isOver && 'ring-2 ring-info border-info'
+        showFileDropOverlay && 'ring-2 ring-info border-info'
       )}
       onClick={handleClick}
     >
-      {isOver && (
+      {showFileDropOverlay && (
         <div className="absolute inset-0 bg-info/10 z-10 flex items-center justify-center pointer-events-none">
           <div className="flex items-center gap-2 bg-info/90 text-info-foreground px-3 py-2 rounded-md">
             <FileDown className="h-4 w-4" />
@@ -286,6 +298,7 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
         onCreateWorktree={handleCreateWorktree}
         onSelectWorktree={handleSelectWorktree}
         onOpenInIDE={handleOpenInIDE}
+        dragHandleListeners={dragHandleListeners}
       />
 
       <div

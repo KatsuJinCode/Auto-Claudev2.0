@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import type { TerminalWorktreeConfig } from '../shared/types';
 
 /**
  * Persisted terminal session data
@@ -15,6 +16,8 @@ export interface TerminalSession {
   outputBuffer: string;  // Last 100KB of output for replay
   createdAt: string;  // ISO timestamp
   lastActiveAt: string;  // ISO timestamp
+  /** Associated worktree configuration (validated on restore) */
+  worktreeConfig?: TerminalWorktreeConfig;
 }
 
 /**
@@ -204,15 +207,36 @@ export class TerminalSessionStore {
   }
 
   /**
+   * Validate worktree config - check if the worktree still exists
+   * Returns undefined if worktree doesn't exist or is invalid
+   */
+  private validateWorktreeConfig(config: TerminalWorktreeConfig | undefined): TerminalWorktreeConfig | undefined {
+    if (!config) return undefined;
+
+    // Check if the worktree path still exists
+    if (!existsSync(config.worktreePath)) {
+      console.warn(`[TerminalSessionStore] Worktree path no longer exists: ${config.worktreePath}, clearing config`);
+      return undefined;
+    }
+
+    return config;
+  }
+
+  /**
    * Get most recent sessions for a project.
    * First checks today, then looks at the most recent date with sessions.
    * This ensures sessions survive app restarts even after midnight.
+   * Validates worktree configs - clears them if worktree no longer exists.
    */
   getSessions(projectPath: string): TerminalSession[] {
     // First check today
     const todaySessions = this.getTodaysSessions();
     if (todaySessions[projectPath]?.length > 0) {
-      return todaySessions[projectPath];
+      // Validate worktree configs before returning
+      return todaySessions[projectPath].map(session => ({
+        ...session,
+        worktreeConfig: this.validateWorktreeConfig(session.worktreeConfig),
+      }));
     }
 
     // If no sessions today, find the most recent date with sessions for this project
@@ -226,7 +250,12 @@ export class TerminalSessionStore {
     if (dates.length > 0) {
       const mostRecentDate = dates[0];
       console.warn(`[TerminalSessionStore] No sessions today, using sessions from ${mostRecentDate}`);
-      return this.data.sessionsByDate[mostRecentDate][projectPath] || [];
+      const sessions = this.data.sessionsByDate[mostRecentDate][projectPath] || [];
+      // Validate worktree configs before returning
+      return sessions.map(session => ({
+        ...session,
+        worktreeConfig: this.validateWorktreeConfig(session.worktreeConfig),
+      }));
     }
 
     return [];
@@ -234,11 +263,17 @@ export class TerminalSessionStore {
 
   /**
    * Get sessions for a specific date and project
+   * Validates worktree configs - clears them if worktree no longer exists.
    */
   getSessionsForDate(date: string, projectPath: string): TerminalSession[] {
     const dateSessions = this.data.sessionsByDate[date];
     if (!dateSessions) return [];
-    return dateSessions[projectPath] || [];
+    const sessions = dateSessions[projectPath] || [];
+    // Validate worktree configs before returning
+    return sessions.map(session => ({
+      ...session,
+      worktreeConfig: this.validateWorktreeConfig(session.worktreeConfig),
+    }));
   }
 
   /**

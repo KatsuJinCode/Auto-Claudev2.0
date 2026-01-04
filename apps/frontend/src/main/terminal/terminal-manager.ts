@@ -280,6 +280,20 @@ export class TerminalManager {
   }
 
   /**
+   * Update terminal worktree config
+   */
+  setWorktreeConfig(id: string, config: import('../../shared/types').TerminalWorktreeConfig | undefined): void {
+    const terminal = this.terminals.get(id);
+    if (terminal) {
+      terminal.worktreeConfig = config;
+      // Persist immediately when worktree config changes
+      if (terminal.projectPath) {
+        SessionHandler.persistSession(terminal);
+      }
+    }
+  }
+
+  /**
    * Check if a terminal's PTY process is alive
    */
   isTerminalAlive(terminalId: string): boolean {

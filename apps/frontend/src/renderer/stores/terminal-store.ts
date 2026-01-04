@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { v4 as uuid } from 'uuid';
+import { arrayMove } from '@dnd-kit/sortable';
 import type { TerminalSession, TerminalWorktreeConfig } from '../../shared/types';
 import { terminalBufferManager } from '../lib/terminal-buffer-manager';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
@@ -49,6 +50,7 @@ interface TerminalState {
   setWorktreeConfig: (id: string, config: TerminalWorktreeConfig | undefined) => void;
   clearAllTerminals: () => void;
   setHasRestoredSessions: (value: boolean) => void;
+  reorderTerminals: (activeId: string, overId: string) => void;
 
   // Selectors
   getTerminal: (id: string) => Terminal | undefined;
@@ -105,11 +107,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       status: 'idle',  // Will be updated to 'running' when PTY is created
       cwd: session.cwd,
       createdAt: new Date(session.createdAt),
-      isClaudeMode: session.isClaudeMode,
+      // Reset Claude mode to false - Claude Code is killed on app restart
+      // Keep claudeSessionId so users can resume by clicking the invoke button
+      isClaudeMode: false,
       claudeSessionId: session.claudeSessionId,
       // outputBuffer now stored in terminalBufferManager
       isRestored: true,
       projectPath: session.projectPath,
+      // Worktree config is validated in main process before restore
+      worktreeConfig: session.worktreeConfig,
     };
 
     // Restore buffer to buffer manager
@@ -202,6 +208,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setHasRestoredSessions: (value: boolean) => {
     set({ hasRestoredSessions: value });
+  },
+
+  reorderTerminals: (activeId: string, overId: string) => {
+    set((state) => {
+      const oldIndex = state.terminals.findIndex((t) => t.id === activeId);
+      const newIndex = state.terminals.findIndex((t) => t.id === overId);
+
+      if (oldIndex === -1 || newIndex === -1) {
+        return state;
+      }
+
+      return {
+        terminals: arrayMove(state.terminals, oldIndex, newIndex),
+      };
+    });
   },
 
   getTerminal: (id: string) => {

@@ -192,6 +192,7 @@ export interface ElectronAPI {
   invokeClaudeInTerminal: (id: string, cwd?: string) => void;
   generateTerminalName: (command: string, cwd?: string) => Promise<IPCResult<string>>;
   setTerminalTitle: (id: string, title: string) => void;
+  setTerminalWorktreeConfig: (id: string, config: TerminalWorktreeConfig | undefined) => void;
 
   // Terminal session management (persistence/restore)
   getTerminalSessions: (projectPath: string) => Promise<IPCResult<TerminalSession[]>>;

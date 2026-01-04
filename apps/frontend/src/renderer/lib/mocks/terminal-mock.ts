@@ -34,6 +34,10 @@ export const terminalMock = {
     console.warn('[Browser Mock] setTerminalTitle called');
   },
 
+  setTerminalWorktreeConfig: () => {
+    console.warn('[Browser Mock] setTerminalWorktreeConfig called');
+  },
+
   // Terminal session management
   getTerminalSessions: async () => ({
     success: true,

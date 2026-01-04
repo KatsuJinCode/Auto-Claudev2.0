@@ -135,20 +135,22 @@ export async function restoreTerminal(
     return { success: false, error: 'Terminal not found after creation' };
   }
 
+  // Restore title and worktree config from session
   terminal.title = session.title;
+  terminal.worktreeConfig = session.worktreeConfig;
 
-  // Restore Claude mode state without sending resume commands
-  // The PTY daemon keeps processes alive, so we just need to reconnect to the existing session
-  if (session.isClaudeMode) {
-    terminal.isClaudeMode = true;
+  // Send title change event for all restored terminals so renderer updates
+  const win = getWindow();
+  if (win) {
+    win.webContents.send(IPC_CHANNELS.TERMINAL_TITLE_CHANGE, session.id, session.title);
+  }
+
+  // Don't restore Claude mode state - Claude Code process is killed on app restart
+  // Keep claudeSessionId so users can resume via the invoke Claude button
+  // The renderer side will show the invoke button since isClaudeMode is false
+  if (session.claudeSessionId) {
     terminal.claudeSessionId = session.claudeSessionId;
-
-    debugLog('[TerminalLifecycle] Restored Claude mode state for session:', session.id, 'sessionId:', session.claudeSessionId);
-
-    const win = getWindow();
-    if (win) {
-      win.webContents.send(IPC_CHANNELS.TERMINAL_TITLE_CHANGE, session.id, session.title);
-    }
+    debugLog('[TerminalLifecycle] Preserved Claude session ID for resume:', session.claudeSessionId);
   }
 
   return {
