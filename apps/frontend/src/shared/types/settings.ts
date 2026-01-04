@@ -246,6 +246,9 @@ export interface AppSettings {
   memoryAzureApiKey?: string;
   memoryAzureBaseUrl?: string;
   memoryAzureEmbeddingDeployment?: string;
+  // Agent Memory Access (MCP) - app-wide defaults
+  graphitiMcpEnabled?: boolean;
+  graphitiMcpUrl?: string;
   // Onboarding wizard completion state
   onboardingCompleted?: boolean;
   // Selected agent profile for preset model/thinking configurations
