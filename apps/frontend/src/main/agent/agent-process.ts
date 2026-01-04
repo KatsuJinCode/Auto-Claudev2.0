@@ -401,7 +401,12 @@ export class AgentProcessManager {
         ...pythonEnv, // Include Python environment (PYTHONPATH for bundled packages)
         ...oauthModeClearVars, // Clear stale ANTHROPIC_* vars when in OAuth mode
         ...apiProfileEnv // Include active API profile config (highest priority for ANTHROPIC_* vars)
-      }
+      },
+      // CRITICAL FOR WINDOWS .EXE: Explicit stdio configuration prevents buffering issues in packaged environments
+      // Pattern from python-env-manager.ts line 244, 315, 367 - all spawn() calls use stdio: 'pipe'
+      stdio: 'pipe',
+      // Hide console window in packaged Windows builds (prevents popup windows)
+      windowsHide: true
     });
 
     console.log(`[AgentProcess] Process spawned with PID: ${childProcess.pid}`);
