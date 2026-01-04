@@ -58,7 +58,14 @@ export function useTerminalEvents({
   useEffect(() => {
     const cleanup = window.electronAPI.onTerminalExit((id, exitCode) => {
       if (id === terminalId) {
-        useTerminalStore.getState().setTerminalStatus(terminalId, 'exited');
+        const store = useTerminalStore.getState();
+        store.setTerminalStatus(terminalId, 'exited');
+        // Reset Claude mode when terminal exits - the Claude process has ended
+        // Use updateTerminal instead of setClaudeMode to avoid changing status back to 'running'
+        const terminal = store.getTerminal(terminalId);
+        if (terminal?.isClaudeMode) {
+          store.updateTerminal(terminalId, { isClaudeMode: false });
+        }
         onExitRef.current?.(exitCode);
       }
     });

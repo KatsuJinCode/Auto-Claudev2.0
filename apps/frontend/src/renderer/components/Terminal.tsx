@@ -147,6 +147,8 @@ export function Terminal({
 
   const handleTitleChange = useCallback((newTitle: string) => {
     updateTerminal(id, { title: newTitle });
+    // Sync to main process so title persists across hot reloads
+    window.electronAPI.setTerminalTitle(id, newTitle);
   }, [id, updateTerminal]);
 
   const handleTaskSelect = useCallback((taskId: string) => {
@@ -155,6 +157,8 @@ export function Terminal({
 
     setAssociatedTask(id, taskId);
     updateTerminal(id, { title: selectedTask.title });
+    // Sync to main process so title persists across hot reloads
+    window.electronAPI.setTerminalTitle(id, selectedTask.title);
 
     const contextMessage = `I'm working on: ${selectedTask.title}
 
@@ -169,6 +173,8 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
   const handleClearTask = useCallback(() => {
     setAssociatedTask(id, undefined);
     updateTerminal(id, { title: 'Claude' });
+    // Sync to main process so title persists across hot reloads
+    window.electronAPI.setTerminalTitle(id, 'Claude');
   }, [id, setAssociatedTask, updateTerminal]);
 
   // Worktree handlers
@@ -186,6 +192,8 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
 
     // Update terminal title and cwd to worktree path
     updateTerminal(id, { title: config.name, cwd: config.worktreePath });
+    // Sync to main process so title persists across hot reloads
+    window.electronAPI.setTerminalTitle(id, config.name);
 
     // Destroy current PTY - a new one will be created in the worktree directory
     if (isCreatedRef.current) {
@@ -204,6 +212,8 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
     // Same logic as handleWorktreeCreated - attach terminal to existing worktree
     setWorktreeConfig(id, config);
     updateTerminal(id, { title: config.name, cwd: config.worktreePath });
+    // Sync to main process so title persists across hot reloads
+    window.electronAPI.setTerminalTitle(id, config.name);
 
     // Destroy current PTY - a new one will be created in the worktree directory
     if (isCreatedRef.current) {

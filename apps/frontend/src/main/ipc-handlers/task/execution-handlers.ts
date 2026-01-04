@@ -765,14 +765,23 @@ export function registerTaskExecutionHandlers(
 
             // Write to ALL plan file locations to ensure consistency
             const planContent = JSON.stringify(plan, null, 2);
+            let writeSucceededForComplete = false;
             for (const pathToUpdate of planPathsToUpdate) {
               try {
                 atomicWriteFileSync(pathToUpdate, planContent);
                 console.log(`[Recovery] Successfully wrote to: ${pathToUpdate}`);
+                writeSucceededForComplete = true;
               } catch (writeError) {
                 console.error(`[Recovery] Failed to write plan file at ${pathToUpdate}:`, writeError);
-                // Continue trying other paths, but track the first error
+                // Continue trying other paths
               }
+            }
+
+            if (!writeSucceededForComplete) {
+              return {
+                success: false,
+                error: 'Failed to write plan file during recovery (all locations failed)'
+              };
             }
 
             return {

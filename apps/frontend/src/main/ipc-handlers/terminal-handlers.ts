@@ -76,6 +76,14 @@ export function registerTerminalHandlers(
     }
   );
 
+  // Set terminal title (user renamed terminal in renderer)
+  ipcMain.on(
+    IPC_CHANNELS.TERMINAL_SET_TITLE,
+    (_, id: string, title: string) => {
+      terminalManager.setTitle(id, title);
+    }
+  );
+
   // Claude profile management (multi-account support)
   ipcMain.handle(
     IPC_CHANNELS.CLAUDE_PROFILES_GET,

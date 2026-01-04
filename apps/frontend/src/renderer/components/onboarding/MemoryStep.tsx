@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Database,
   Info,
@@ -60,6 +61,7 @@ interface MemoryConfig {
  * Note: LLM provider is not configurable - Claude SDK is used throughout.
  */
 export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
+  const { t } = useTranslation('onboarding');
   const { settings, updateSettings } = useSettingsStore();
 
   // Initialize config with memory enabled by default
@@ -198,7 +200,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
     if (embeddingProvider === 'ollama') {
       return (
         <div className="space-y-3">
-          <Label className="text-sm font-medium text-foreground">Select Embedding Model</Label>
+          <Label className="text-sm font-medium text-foreground">{t('memory.selectEmbeddingModel')}</Label>
           <OllamaModelSelector
             selectedModel={config.ollamaEmbeddingModel}
             onModelSelect={handleOllamaModelSelect}
@@ -211,8 +213,8 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
     if (embeddingProvider === 'openai') {
       return (
         <div className="space-y-2">
-          <Label className="text-sm font-medium text-foreground">OpenAI API Key</Label>
-          <p className="text-xs text-muted-foreground">Required for OpenAI embeddings</p>
+          <Label className="text-sm font-medium text-foreground">{t('memory.openaiApiKey')}</Label>
+          <p className="text-xs text-muted-foreground">{t('memory.openaiApiKeyDescription')}</p>
           <div className="relative">
             <Input
               type={showApiKey['openai'] ? 'text' : 'password'}
@@ -231,7 +233,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Get your key from{' '}
+            {t('memory.openaiGetKey')}{' '}
             <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80">
               OpenAI
             </a>
@@ -243,8 +245,8 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
     if (embeddingProvider === 'voyage') {
       return (
         <div className="space-y-2">
-          <Label className="text-sm font-medium text-foreground">Voyage AI API Key</Label>
-          <p className="text-xs text-muted-foreground">Required for Voyage AI embeddings</p>
+          <Label className="text-sm font-medium text-foreground">{t('memory.voyageApiKey')}</Label>
+          <p className="text-xs text-muted-foreground">{t('memory.voyageApiKeyDescription')}</p>
           <div className="relative">
             <Input
               type={showApiKey['voyage'] ? 'text' : 'password'}
@@ -263,7 +265,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Get your key from{' '}
+            {t('memory.openaiGetKey')}{' '}
             <a href="https://dash.voyageai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80">
               Voyage AI
             </a>
@@ -275,8 +277,8 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
     if (embeddingProvider === 'google') {
       return (
         <div className="space-y-2">
-          <Label className="text-sm font-medium text-foreground">Google AI API Key</Label>
-          <p className="text-xs text-muted-foreground">Required for Google AI embeddings</p>
+          <Label className="text-sm font-medium text-foreground">{t('memory.googleApiKey')}</Label>
+          <p className="text-xs text-muted-foreground">{t('memory.googleApiKeyDescription')}</p>
           <div className="relative">
             <Input
               type={showApiKey['google'] ? 'text' : 'password'}
@@ -295,7 +297,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Get your key from{' '}
+            {t('memory.openaiGetKey')}{' '}
             <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80">
               Google AI Studio
             </a>
@@ -307,9 +309,9 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
     if (embeddingProvider === 'azure_openai') {
       return (
         <div className="space-y-3 p-3 rounded-md bg-muted/50">
-          <Label className="text-sm font-medium text-foreground">Azure OpenAI Configuration</Label>
+          <Label className="text-sm font-medium text-foreground">{t('memory.azureConfig')}</Label>
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">API Key</Label>
+            <Label className="text-xs text-muted-foreground">{t('memory.azureApiKey')}</Label>
             <div className="relative">
               <Input
                 type={showApiKey['azure'] ? 'text' : 'password'}
@@ -329,7 +331,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             </div>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Base URL</Label>
+            <Label className="text-xs text-muted-foreground">{t('memory.azureBaseUrl')}</Label>
             <Input
               placeholder="https://your-resource.openai.azure.com"
               value={config.azureOpenaiBaseUrl}
@@ -339,7 +341,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Embedding Deployment Name</Label>
+            <Label className="text-xs text-muted-foreground">{t('memory.azureEmbeddingDeployment')}</Label>
             <Input
               placeholder="text-embedding-ada-002"
               value={config.azureOpenaiEmbeddingDeployment}
@@ -366,10 +368,10 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             </div>
           </div>
           <h1 className="text-2xl font-bold text-foreground tracking-tight">
-            Memory
+            {t('memory.title')}
           </h1>
           <p className="mt-2 text-muted-foreground">
-            Configure persistent cross-session memory for agents
+            {t('memory.description')}
           </p>
         </div>
 
@@ -395,9 +397,9 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               <div className="flex items-center gap-3">
                 <Database className="h-5 w-5 text-muted-foreground" />
                 <div>
-                  <Label className="font-medium text-foreground">Enable Memory</Label>
+                  <Label className="font-medium text-foreground">{t('memory.enableMemory')}</Label>
                   <p className="text-xs text-muted-foreground">
-                    Persistent cross-session memory using LadybugDB (embedded database)
+                    {t('memory.enableMemoryDescription')}
                   </p>
                 </div>
               </div>
@@ -414,8 +416,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                 <div className="flex items-start gap-3">
                   <Info className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
                   <p className="text-sm text-muted-foreground">
-                    Memory is disabled. Session insights will be stored in local files only.
-                    Enable Memory for persistent cross-session context with semantic search.
+                    {t('memory.memoryDisabledInfo')}
                   </p>
                 </div>
               </div>
@@ -427,9 +428,9 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                 {/* Agent Memory Access Toggle */}
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <Label className="font-normal text-foreground">Enable Agent Memory Access</Label>
+                    <Label className="font-normal text-foreground">{t('memory.enableAgentAccess')}</Label>
                     <p className="text-xs text-muted-foreground">
-                      Allow agents to search and add to the knowledge graph via MCP
+                      {t('memory.enableAgentAccessDescription')}
                     </p>
                   </div>
                   <Switch
@@ -442,9 +443,9 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                 {/* MCP Server URL (shown when agent memory is enabled) */}
                 {config.agentMemoryEnabled && (
                   <div className="space-y-2 ml-6">
-                    <Label className="text-sm font-medium text-foreground">Graphiti MCP Server URL</Label>
+                    <Label className="text-sm font-medium text-foreground">{t('memory.mcpServerUrl')}</Label>
                     <p className="text-xs text-muted-foreground">
-                      URL of the Graphiti MCP server for agent memory access
+                      {t('memory.mcpServerUrlDescription')}
                     </p>
                     <Input
                       placeholder="http://localhost:8000/mcp/"
@@ -460,9 +461,9 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
 
                 {/* Embedding Provider Selection */}
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium text-foreground">Embedding Provider</Label>
+                  <Label className="text-sm font-medium text-foreground">{t('memory.embeddingProvider')}</Label>
                   <p className="text-xs text-muted-foreground">
-                    Provider for semantic search (optional - keyword search works without)
+                    {t('memory.embeddingProviderDescription')}
                   </p>
                   <Select
                     value={config.embeddingProvider}
@@ -472,14 +473,14 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                     disabled={isSaving}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select embedding provider" />
+                      <SelectValue placeholder={t('memory.embeddingProvider')} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="ollama">Ollama (Local - Free)</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="voyage">Voyage AI</SelectItem>
-                      <SelectItem value="google">Google AI</SelectItem>
-                      <SelectItem value="azure_openai">Azure OpenAI</SelectItem>
+                      <SelectItem value="ollama">{t('memory.providers.ollama')}</SelectItem>
+                      <SelectItem value="openai">{t('memory.providers.openai')}</SelectItem>
+                      <SelectItem value="voyage">{t('memory.providers.voyage')}</SelectItem>
+                      <SelectItem value="google">{t('memory.providers.google')}</SelectItem>
+                      <SelectItem value="azure_openai">{t('memory.providers.azure')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -493,8 +494,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                     <Info className="h-5 w-5 text-info shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <p className="text-sm text-muted-foreground">
-                        Memory stores discoveries, patterns, and insights about your codebase
-                        so future sessions start with context already loaded. No Docker required - uses an embedded database.
+                        {t('memory.memoryInfo')}
                       </p>
                       <a
                         href="https://docs.auto-claude.dev/memory"
@@ -502,7 +502,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 mt-2"
                       >
-                        Learn more about Memory
+                        {t('memory.learnMore')}
                         <ExternalLink className="h-3.5 w-3.5" />
                       </a>
                     </div>
@@ -520,7 +520,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             onClick={onBack}
             className="text-muted-foreground hover:text-foreground"
           >
-            Back
+            {t('memory.back')}
           </Button>
           <div className="flex gap-2">
             <Button
@@ -528,7 +528,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               onClick={onNext}
               disabled={isCheckingInfra || isSaving}
             >
-              Skip
+              {t('memory.skip')}
             </Button>
             <Button
               onClick={handleSave}
@@ -537,10 +537,10 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               {isSaving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Saving...
+                  {t('memory.saving')}
                 </>
               ) : (
-                'Save & Continue'
+                t('memory.saveAndContinue')
               )}
             </Button>
           </div>

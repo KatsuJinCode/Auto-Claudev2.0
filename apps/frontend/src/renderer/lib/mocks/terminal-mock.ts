@@ -30,6 +30,10 @@ export const terminalMock = {
     data: 'Mock Terminal'
   }),
 
+  setTerminalTitle: () => {
+    console.warn('[Browser Mock] setTerminalTitle called');
+  },
+
   // Terminal session management
   getTerminalSessions: async () => ({
     success: true,

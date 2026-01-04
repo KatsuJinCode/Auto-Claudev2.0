@@ -39,7 +39,6 @@ from agents import (
     run_followup_planner,
     save_session_memory,
     save_session_to_graphiti,
-    sync_plan_to_source,
     sync_spec_to_source,
 )
 
@@ -58,7 +57,6 @@ __all__ = [
     "load_implementation_plan",
     "find_subtask_in_plan",
     "find_phase_for_subtask",
-    "sync_plan_to_source",
     "sync_spec_to_source",
     "AUTO_CONTINUE_DELAY_SECONDS",
     "HUMAN_INTERVENTION_FILE",

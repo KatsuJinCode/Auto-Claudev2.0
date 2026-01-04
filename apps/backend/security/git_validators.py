@@ -46,16 +46,28 @@ def validate_git_config(command_string: str) -> ValidationResult:
     try:
         tokens = shlex.split(command_string)
     except ValueError:
-        return True, ""  # Can't parse, let other validators handle it
+        return False, "Could not parse git command"  # Fail closed on parse errors
 
     if len(tokens) < 2 or tokens[0] != "git" or tokens[1] != "config":
         return True, ""  # Not a git config command
 
-    # Check for any blocked config keys in the command
-    command_lower = command_string.lower()
+    # Extract the config key from the command
+    # git config [options] <key> [value] - key is typically after config and any options
+    config_key = None
+    for token in tokens[2:]:
+        # Skip options (start with -)
+        if token.startswith("-"):
+            continue
+        # First non-option token is the config key
+        config_key = token.lower()
+        break
 
+    if not config_key:
+        return True, ""  # No config key specified (e.g., git config --list)
+
+    # Check if the exact config key is blocked
     for blocked_key in BLOCKED_GIT_CONFIG_KEYS:
-        if blocked_key in command_lower:
+        if config_key == blocked_key:
             return False, (
                 f"BLOCKED: Cannot modify git identity configuration\n\n"
                 f"You attempted to set '{blocked_key}' which is not allowed.\n\n"

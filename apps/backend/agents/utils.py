@@ -124,6 +124,11 @@ def sync_spec_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
     try:
         # Sync all files and directories from worktree spec to source spec
         for item in spec_dir.iterdir():
+            # Skip symlinks to prevent path traversal attacks
+            if item.is_symlink():
+                logger.warning(f"Skipping symlink during sync: {item.name}")
+                continue
+
             source_item = source_spec_dir / item.name
 
             if item.is_file():
@@ -155,6 +160,13 @@ def _sync_directory(source_dir: Path, target_dir: Path) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
 
     for item in source_dir.iterdir():
+        # Skip symlinks to prevent path traversal attacks
+        if item.is_symlink():
+            logger.warning(
+                f"Skipping symlink during sync: {source_dir.name}/{item.name}"
+            )
+            continue
+
         target_item = target_dir / item.name
 
         if item.is_file():

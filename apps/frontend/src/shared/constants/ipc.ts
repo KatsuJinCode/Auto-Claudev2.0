@@ -63,6 +63,7 @@ export const IPC_CHANNELS = {
   TERMINAL_RESIZE: 'terminal:resize',
   TERMINAL_INVOKE_CLAUDE: 'terminal:invokeClaude',
   TERMINAL_GENERATE_NAME: 'terminal:generateName',
+  TERMINAL_SET_TITLE: 'terminal:setTitle',  // Renderer -> Main: user renamed terminal
 
   // Terminal session management
   TERMINAL_GET_SESSIONS: 'terminal:getSessions',

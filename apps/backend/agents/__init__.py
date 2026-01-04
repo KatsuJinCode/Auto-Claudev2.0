@@ -32,7 +32,6 @@ __all__ = [
     "load_implementation_plan",
     "find_subtask_in_plan",
     "find_phase_for_subtask",
-    "sync_plan_to_source",
     "sync_spec_to_source",
     # Constants
     "AUTO_CONTINUE_DELAY_SECONDS",
@@ -78,7 +77,6 @@ def __getattr__(name):
         "get_commit_count",
         "get_latest_commit",
         "load_implementation_plan",
-        "sync_plan_to_source",
         "sync_spec_to_source",
     ):
         from .utils import (
@@ -87,7 +85,6 @@ def __getattr__(name):
             get_commit_count,
             get_latest_commit,
             load_implementation_plan,
-            sync_plan_to_source,
             sync_spec_to_source,
         )
 
