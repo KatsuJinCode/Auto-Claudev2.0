@@ -684,6 +684,10 @@ class GitHubOrchestrator:
                 pr_number=pr_number,
             )
 
+            # Fetch CI status BEFORE calling reviewer so AI can factor it into verdict
+            ci_status = await self.gh_client.get_pr_checks_comprehensive(pr_number)
+            followup_context.ci_status = ci_status
+
             # Use parallel orchestrator for follow-up if enabled
             if self.config.use_parallel_orchestrator:
                 print(
@@ -728,9 +732,9 @@ class GitHubOrchestrator:
                 )
                 result = await reviewer.review_followup(followup_context)
 
-            # Check CI status and override verdict if failing
-            ci_status = await self.gh_client.get_pr_checks_comprehensive(pr_number)
-            failed_checks = ci_status.get("failed_checks", [])
+            # Fallback: ensure CI failures block merge even if AI didn't factor it in
+            # (CI status was already passed to AI via followup_context.ci_status)
+            failed_checks = followup_context.ci_status.get("failed_checks", [])
             if failed_checks:
                 print(
                     f"[Followup] CI checks failing: {failed_checks}",

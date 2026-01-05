@@ -391,6 +391,44 @@ class ParallelFollowupReviewer:
 
         return "\n\n---\n\n".join(ai_content)
 
+    def _format_ci_status(self, context: FollowupReviewContext) -> str:
+        """Format CI status for the prompt."""
+        ci_status = context.ci_status
+        if not ci_status:
+            return "CI status not available."
+
+        passing = ci_status.get("passing", 0)
+        failing = ci_status.get("failing", 0)
+        pending = ci_status.get("pending", 0)
+        failed_checks = ci_status.get("failed_checks", [])
+        awaiting_approval = ci_status.get("awaiting_approval", 0)
+
+        lines = []
+
+        # Overall status
+        if failing > 0:
+            lines.append(f"⚠️ **{failing} CI check(s) FAILING** - PR cannot be merged")
+        elif pending > 0:
+            lines.append(f"⏳ **{pending} CI check(s) pending** - Wait for completion")
+        elif passing > 0:
+            lines.append(f"✅ **All {passing} CI check(s) passing**")
+        else:
+            lines.append("No CI checks configured")
+
+        # List failed checks
+        if failed_checks:
+            lines.append("\n**Failed checks:**")
+            for check in failed_checks:
+                lines.append(f"  - ❌ {check}")
+
+        # Awaiting approval (fork PRs)
+        if awaiting_approval > 0:
+            lines.append(
+                f"\n⏸️ **{awaiting_approval} workflow(s) awaiting maintainer approval** (fork PR)"
+            )
+
+        return "\n".join(lines)
+
     def _build_orchestrator_prompt(self, context: FollowupReviewContext) -> str:
         """Build full prompt for orchestrator with follow-up context."""
         # Load orchestrator prompt
@@ -403,6 +441,7 @@ class ParallelFollowupReviewer:
         commits = self._format_commits(context)
         contributor_comments = self._format_comments(context)
         ai_reviews = self._format_ai_reviews(context)
+        ci_status = self._format_ci_status(context)
 
         # Truncate diff if too long
         MAX_DIFF_CHARS = 100_000
@@ -420,6 +459,9 @@ class ParallelFollowupReviewer:
 **Current HEAD:** {context.current_commit_sha[:8]}
 **New Commits:** {len(context.commits_since_review)}
 **Files Changed:** {len(context.files_changed_since_review)}
+
+### CI Status (CRITICAL - Must Factor Into Verdict)
+{ci_status}
 
 ### Previous Review Summary
 {context.previous_review.summary[:500] if context.previous_review.summary else "No summary available."}
@@ -449,6 +491,7 @@ class ParallelFollowupReviewer:
 Now analyze this follow-up and delegate to the appropriate specialist agents.
 Remember: YOU decide which agents to invoke based on YOUR analysis.
 The SDK will run invoked agents in parallel automatically.
+**CRITICAL: Your verdict MUST account for CI status. Failing CI = BLOCKED verdict.**
 """
 
         return base_prompt + followup_context
