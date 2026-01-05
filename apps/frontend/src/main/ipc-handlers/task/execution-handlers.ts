@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus } from '../../../shared/types';
 import path from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { AgentManager } from '../../agent';
 import { fileWatcher } from '../../file-watcher';
@@ -12,7 +12,6 @@ import { getClaudeProfileManager } from '../../claude-profile-manager';
 import {
   getPlanPath,
   persistPlanStatus,
-  persistPlanStatusSync,
   createPlanIfNotExists
 } from './plan-file-utils';
 import { findTaskWorktree } from '../../worktree-paths';

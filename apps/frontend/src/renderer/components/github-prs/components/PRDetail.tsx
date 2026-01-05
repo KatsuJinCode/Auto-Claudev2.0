@@ -22,7 +22,6 @@ import { Button } from '../../ui/button';
 import { Card, CardContent } from '../../ui/card';
 import { ScrollArea } from '../../ui/scroll-area';
 import { Progress } from '../../ui/progress';
-import { formatDate } from '../utils/formatDate';
 
 // Local components
 import { CollapsibleCard } from './CollapsibleCard';
@@ -32,7 +31,7 @@ import { ReviewFindings } from './ReviewFindings';
 import { PRLogs } from './PRLogs';
 
 import type { PRData, PRReviewResult, PRReviewProgress } from '../hooks/useGitHubPRs';
-import type { NewCommitsCheck, PRLogs as PRLogsType, WorkflowsAwaitingApprovalResult, WorkflowAwaitingApproval } from '../../../../preload/api/modules/github-api';
+import type { NewCommitsCheck, PRLogs as PRLogsType, WorkflowsAwaitingApprovalResult } from '../../../../preload/api/modules/github-api';
 
 interface PRDetailProps {
   pr: PRData;
@@ -72,7 +71,7 @@ export function PRDetail({
   reviewProgress,
   isReviewing,
   initialNewCommitsCheck,
-  isActive = false,
+  isActive: _isActive = false,
   isLoadingFiles = false,
   onRunReview,
   onRunFollowupReview,
@@ -84,7 +83,7 @@ export function PRDetail({
   onAssignPR: _onAssignPR,
   onGetLogs,
 }: PRDetailProps) {
-  const { t, i18n } = useTranslation('common');
+  const { t } = useTranslation('common');
   // Selection state for findings
   const [selectedFindingIds, setSelectedFindingIds] = useState<Set<string>>(new Set());
   const [postedFindingIds, setPostedFindingIds] = useState<Set<string>>(new Set());

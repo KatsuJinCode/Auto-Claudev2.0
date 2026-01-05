@@ -289,7 +289,9 @@ async function fetchLatestStableRelease(): Promise<AppUpdateInfo | null> {
       // Validate HTTP status code
       const statusCode = response.statusCode;
       if (statusCode !== 200) {
-        console.error(`[app-updater] GitHub API error: HTTP ${statusCode}`);
+        // Sanitize statusCode to prevent log injection (ensure it's a safe number)
+        const safeStatusCode = typeof statusCode === 'number' ? statusCode : 'unknown';
+        console.error(`[app-updater] GitHub API error: HTTP ${safeStatusCode}`);
         if (statusCode === 403) {
           console.error('[app-updater] Rate limit may have been exceeded');
         } else if (statusCode === 404) {
@@ -333,7 +335,10 @@ async function fetchLatestStableRelease(): Promise<AppUpdateInfo | null> {
           }
 
           const version = latestStable.tag_name.replace(/^v/, '');
-          console.warn('[app-updater] Found latest stable release:', version);
+          // Sanitize version string for logging (remove control characters and limit length)
+          // eslint-disable-next-line no-control-regex
+          const safeVersion = String(version).replace(/[\x00-\x1f\x7f]/g, '').slice(0, 50);
+          console.warn('[app-updater] Found latest stable release:', safeVersion);
 
           resolve({
             version,
@@ -348,7 +353,9 @@ async function fetchLatestStableRelease(): Promise<AppUpdateInfo | null> {
     });
 
     request.on('error', (error) => {
-      console.error('[app-updater] Failed to fetch releases:', error);
+      // Sanitize error message for logging (use only the message property)
+      const safeErrorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[app-updater] Failed to fetch releases:', safeErrorMessage);
       resolve(null);
     });
 

@@ -161,7 +161,9 @@ function checkChangelogEntry(version) {
   const content = fs.readFileSync(changelogPath, 'utf8');
 
   // Look for "## X.Y.Z" or "## X.Y.Z -" header
-  const versionPattern = new RegExp(`^## ${version.replace(/\./g, '\\.')}(\\s|-)`, 'm');
+  // Escape all regex special characters in version to prevent regex injection
+  const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const versionPattern = new RegExp(`^## ${escapedVersion}(\\s|-)`, 'm');
 
   if (versionPattern.test(content)) {
     return true;
