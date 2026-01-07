@@ -33,6 +33,7 @@ interface KanbanBoardProps {
   tasks: Task[];
   onTaskClick: (task: Task) => void;
   onNewTaskClick?: () => void;
+  onRefreshClick?: () => void;
 }
 
 interface DroppableColumnProps {
