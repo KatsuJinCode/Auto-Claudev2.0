@@ -188,6 +188,12 @@ main (user's branch)
 - User reviews in spec worktree (`.worktrees/{spec-name}/`)
 - Final merge: spec branch → main (after user approval)
 
+**⚠️ CRITICAL: Merge Before New Spec**
+- Each new spec branches from current main/master
+- If a completed spec is NOT merged before creating the next spec, the new spec will be built on outdated code
+- ALWAYS run `--merge` for completed specs before starting new ones
+- Failure to do this creates parallel branches that cannot be merged
+
 **Workflow:**
 1. Build runs in isolated worktree on spec branch
 2. Agent implements subtasks (can spawn subagents for parallel work)
