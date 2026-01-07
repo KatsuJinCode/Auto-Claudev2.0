@@ -210,7 +210,7 @@ function DroppableColumn({ status, tasks, onTaskClick, isOver, onAddClick, onArc
   );
 }
 
-export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick }: KanbanBoardProps) {
+export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefreshClick }: KanbanBoardProps) {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [overColumnId, setOverColumnId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
