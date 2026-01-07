@@ -44,6 +44,7 @@ export interface TaskExecutionOptions {
   parallel?: boolean;
   workers?: number;
   baseBranch?: string;
+  resumeSessionId?: string;  // Claude session ID to resume an interrupted session
 }
 
 export interface SpecCreationMetadata {
