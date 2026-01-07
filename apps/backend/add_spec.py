@@ -239,6 +239,20 @@ def create_spec_from_json(
     if not phases_def:
         raise ValueError("JSON must contain 'phases' array with at least one phase")
 
+    # CRITICAL: Validate that no phase uses "subtasks" - must be "chunks"
+    for i, phase in enumerate(phases_def, 1):
+        if "subtasks" in phase:
+            raise ValueError(
+                f"Phase {i} uses 'subtasks' but MUST use 'chunks'. "
+                "Auto-Claude requires 'chunks' key, not 'subtasks'. "
+                "This is a common mistake that causes instant task failure."
+            )
+        if "chunks" not in phase:
+            raise ValueError(
+                f"Phase {i} is missing 'chunks' array. "
+                "Each phase must have a 'chunks' array (not 'subtasks')."
+            )
+
     # Get next spec number
     spec_num = get_next_spec_number(specs_dir)
     spec_id = f"{spec_num:03d}-{name}"
