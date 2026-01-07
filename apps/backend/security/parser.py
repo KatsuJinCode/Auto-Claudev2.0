@@ -33,10 +33,10 @@ def _cross_platform_basename(path: str) -> str:
         The basename of the path (e.g., "python.exe" from "C:\\Python312\\python.exe")
     """
     # Strip surrounding quotes if present
-    path = path.strip('\'"')
+    path = path.strip("'\"")
 
     # Check if this looks like a Windows path (contains backslash or drive letter)
-    if '\\' in path or (len(path) >= 2 and path[1] == ':'):
+    if "\\" in path or (len(path) >= 2 and path[1] == ":"):
         # Use PureWindowsPath to handle Windows paths on any platform
         return PureWindowsPath(path).name
 
@@ -63,14 +63,26 @@ def _fallback_extract_commands(command_string: str) -> list[str]:
 
     # Shell keywords to skip
     shell_keywords = {
-        "if", "then", "else", "elif", "fi", "for", "while",
-        "until", "do", "done", "case", "esac", "in", "function"
+        "if",
+        "then",
+        "else",
+        "elif",
+        "fi",
+        "for",
+        "while",
+        "until",
+        "do",
+        "done",
+        "case",
+        "esac",
+        "in",
+        "function",
     }
 
     # First, split by common shell operators
     # This regex splits on &&, ||, |, ; while being careful about quotes
     # We're being permissive here since shlex already failed
-    parts = re.split(r'\s*(?:&&|\|\||\|)\s*|;\s*', command_string)
+    parts = re.split(r"\s*(?:&&|\|\||\|)\s*|;\s*", command_string)
 
     for part in parts:
         part = part.strip()
@@ -78,8 +90,8 @@ def _fallback_extract_commands(command_string: str) -> list[str]:
             continue
 
         # Skip variable assignments at the start (VAR=value cmd)
-        while re.match(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+', part):
-            part = re.sub(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+', '', part)
+        while re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+", part):
+            part = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+", "", part)
 
         if not part:
             continue
@@ -104,14 +116,14 @@ def _fallback_extract_commands(command_string: str) -> list[str]:
         cmd = _cross_platform_basename(first_token)
 
         # Remove Windows extensions
-        cmd = re.sub(r'\.(exe|cmd|bat|ps1|sh)$', '', cmd, flags=re.IGNORECASE)
+        cmd = re.sub(r"\.(exe|cmd|bat|ps1|sh)$", "", cmd, flags=re.IGNORECASE)
 
         # Clean up any remaining quotes or special chars at the start
-        cmd = re.sub(r'^["\'\\/]+', '', cmd)
+        cmd = re.sub(r'^["\'\\/]+', "", cmd)
 
         # Skip tokens that look like function calls or code fragments (not shell commands)
         # These appear when splitting on semicolons inside malformed quoted strings
-        if '(' in cmd or ')' in cmd or '.' in cmd:
+        if "(" in cmd or ")" in cmd or "." in cmd:
             continue
 
         if cmd and cmd.lower() not in shell_keywords:
