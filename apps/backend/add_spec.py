@@ -157,13 +157,14 @@ def create_spec(
     (spec_dir / "spec.md").write_text(spec_md)
 
     # 4. implementation_plan.json
-    phase_chunks = []
+    phase_subtasks = []
     for i, chunk_desc in enumerate(chunks, 1):
-        phase_chunks.append({
+        phase_subtasks.append({
             "id": f"1.{i}",
             "description": chunk_desc,
             "status": "pending",
-            "files": files_to_create + files_to_modify if files_to_create or files_to_modify else [f"{name.replace('-', '_')}.py"]
+            "files_to_create": files_to_create if files_to_create else [],
+            "files_to_modify": files_to_modify if files_to_modify else []
         })
 
     implementation_plan = {
@@ -173,7 +174,7 @@ def create_spec(
             {
                 "phase": 1,
                 "name": "Core Implementation",
-                "chunks": phase_chunks
+                "subtasks": phase_subtasks
             }
         ],
         "status": "approved",
@@ -239,18 +240,12 @@ def create_spec_from_json(
     if not phases_def:
         raise ValueError("JSON must contain 'phases' array with at least one phase")
 
-    # CRITICAL: Validate that no phase uses "subtasks" - must be "chunks"
+    # Validate that each phase has tasks (accepts either 'chunks' or 'subtasks' in input)
     for i, phase in enumerate(phases_def, 1):
-        if "subtasks" in phase:
+        if "chunks" not in phase and "subtasks" not in phase:
             raise ValueError(
-                f"Phase {i} uses 'subtasks' but MUST use 'chunks'. "
-                "Auto-Claude requires 'chunks' key, not 'subtasks'. "
-                "This is a common mistake that causes instant task failure."
-            )
-        if "chunks" not in phase:
-            raise ValueError(
-                f"Phase {i} is missing 'chunks' array. "
-                "Each phase must have a 'chunks' array (not 'subtasks')."
+                f"Phase {i} is missing task array. "
+                "Each phase must have a 'chunks' array defining the tasks."
             )
 
     # Get next spec number
@@ -274,7 +269,8 @@ def create_spec_from_json(
     # 2. context.json - collect all files from all phases
     all_files = []
     for phase in phases_def:
-        for chunk in phase.get("chunks", []):
+        tasks = phase.get("chunks", phase.get("subtasks", []))
+        for chunk in tasks:
             all_files.extend(chunk.get("files", []))
 
     context = {
@@ -326,21 +322,28 @@ def create_spec_from_json(
     impl_phases = []
     for i, phase in enumerate(phases_def, 1):
         phase_chunks = []
-        for j, chunk in enumerate(phase.get("chunks", []), 1):
+        # Accept both "chunks" and "subtasks" as input keys
+        input_tasks = phase.get("chunks", phase.get("subtasks", []))
+        for j, chunk in enumerate(input_tasks, 1):
             chunk_entry = {
                 "id": f"{i}.{j}",
                 "description": chunk.get("description", f"Implement chunk {j}"),
                 "status": "pending",
-                "files": chunk.get("files", [])
+                "files_to_create": chunk.get("files", [])
             }
             if "verification" in chunk:
-                chunk_entry["verification"] = chunk["verification"]
+                # CRITICAL: verification must be a dict, not a string
+                v = chunk["verification"]
+                if isinstance(v, str):
+                    chunk_entry["verification"] = {"type": "manual", "scenario": v}
+                else:
+                    chunk_entry["verification"] = v
             phase_chunks.append(chunk_entry)
 
         phase_entry = {
             "phase": i,
             "name": phase.get("name", f"Phase {i}"),
-            "chunks": phase_chunks  # MUST be "chunks" not "subtasks"
+            "subtasks": phase_chunks  # MUST be "subtasks" not "chunks"
         }
         if "description" in phase:
             phase_entry["description"] = phase["description"]
