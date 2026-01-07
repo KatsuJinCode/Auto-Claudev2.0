@@ -196,6 +196,169 @@ def create_spec(
     return str(spec_dir)
 
 
+def create_spec_from_json(
+    project_dir: str,
+    name: str,
+    json_path: str,
+) -> str:
+    """Create a multi-phase spec from a JSON definition file.
+
+    The JSON file format:
+    {
+      "description": "Overall description",
+      "workflow_type": "feature",
+      "spec_content": "Optional full spec.md content",
+      "phases": [
+        {
+          "name": "Phase Name",
+          "description": "Phase description",
+          "depends_on": [1],  # Optional: list of phase numbers this depends on
+          "chunks": [
+            {
+              "description": "What to implement",
+              "files": ["file1.py", "file2.py"],
+              "verification": "How to verify (optional)"
+            }
+          ]
+        }
+      ]
+    }
+    """
+    project_path = Path(project_dir).resolve()
+    specs_dir = project_path / ".auto-claude" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load JSON definition
+    with open(json_path, 'r') as f:
+        spec_def = json.load(f)
+
+    description = spec_def.get("description", f"Implement {name}")
+    workflow_type = spec_def.get("workflow_type", "feature")
+    phases_def = spec_def.get("phases", [])
+
+    if not phases_def:
+        raise ValueError("JSON must contain 'phases' array with at least one phase")
+
+    # Get next spec number
+    spec_num = get_next_spec_number(specs_dir)
+    spec_id = f"{spec_num:03d}-{name}"
+    spec_dir = specs_dir / spec_id
+    spec_dir.mkdir(exist_ok=True)
+
+    now = datetime.now(timezone.utc)
+    timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # 1. requirements.json
+    requirements = {
+        "task_description": description,
+        "workflow_type": workflow_type,
+        "services_involved": [name.replace("-", "_")],
+        "created_at": timestamp
+    }
+    (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
+
+    # 2. context.json - collect all files from all phases
+    all_files = []
+    for phase in phases_def:
+        for chunk in phase.get("chunks", []):
+            all_files.extend(chunk.get("files", []))
+
+    context = {
+        "task_description": description,
+        "files_to_modify": [],
+        "files_to_create": list(set(all_files)),
+        "files_to_reference": [],
+        "scoped_services": [name.replace("-", "_")]
+    }
+    (spec_dir / "context.json").write_text(json.dumps(context, indent=2))
+
+    # 3. spec.md - use custom content or generate
+    if "spec_content" in spec_def:
+        spec_md = spec_def["spec_content"]
+    else:
+        phase_descriptions = []
+        for i, phase in enumerate(phases_def, 1):
+            phase_name = phase.get("name", f"Phase {i}")
+            phase_desc = phase.get("description", "")
+            deps = phase.get("depends_on", [])
+            dep_str = f" (depends on phases: {deps})" if deps else ""
+            phase_descriptions.append(f"### Phase {i}: {phase_name}{dep_str}\n{phase_desc}")
+
+        spec_md = f"""# {name.replace("-", " ").title()}
+
+## Overview
+{description}
+
+## Workflow Type
+{workflow_type.title()} - Implementation
+
+## Phases
+
+{chr(10).join(phase_descriptions)}
+
+## Success Criteria
+1. All phases complete successfully
+2. All tests pass
+3. Code follows project conventions
+
+## QA Acceptance Criteria
+- [ ] All implementation phases complete
+- [ ] Tests pass
+- [ ] No regressions
+"""
+    (spec_dir / "spec.md").write_text(spec_md)
+
+    # 4. implementation_plan.json - with proper phases and chunks
+    impl_phases = []
+    for i, phase in enumerate(phases_def, 1):
+        phase_chunks = []
+        for j, chunk in enumerate(phase.get("chunks", []), 1):
+            chunk_entry = {
+                "id": f"{i}.{j}",
+                "description": chunk.get("description", f"Implement chunk {j}"),
+                "status": "pending",
+                "files": chunk.get("files", [])
+            }
+            if "verification" in chunk:
+                chunk_entry["verification"] = chunk["verification"]
+            phase_chunks.append(chunk_entry)
+
+        phase_entry = {
+            "phase": i,
+            "name": phase.get("name", f"Phase {i}"),
+            "chunks": phase_chunks  # MUST be "chunks" not "subtasks"
+        }
+        if "description" in phase:
+            phase_entry["description"] = phase["description"]
+        if "depends_on" in phase:
+            phase_entry["depends_on"] = phase["depends_on"]
+
+        impl_phases.append(phase_entry)
+
+    implementation_plan = {
+        "feature": name.replace("-", "_"),
+        "workflow_type": workflow_type,
+        "phases": impl_phases,
+        "status": "approved",
+        "planStatus": "approved",
+        "updated_at": timestamp
+    }
+    (spec_dir / "implementation_plan.json").write_text(json.dumps(implementation_plan, indent=2))
+
+    # 5. review_state.json (CRITICAL - makes spec buildable)
+    review_state = {
+        "approved": True,
+        "approved_by": "cli",
+        "approved_at": timestamp,
+        "feedback": [],
+        "spec_hash": "",
+        "review_count": 1
+    }
+    (spec_dir / "review_state.json").write_text(json.dumps(review_state, indent=2))
+
+    return str(spec_dir)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Add a spec to Auto-Claude GUI",
