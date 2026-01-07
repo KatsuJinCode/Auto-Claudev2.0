@@ -422,17 +422,33 @@ def main():
     chunks = [c.strip() for c in args.chunks.split(",") if c.strip()]
 
     try:
-        spec_dir = create_spec(
-            project_dir=args.project_dir,
-            name=args.name,
-            description=args.description,
-            files_to_create=files_to_create,
-            files_to_modify=files_to_modify,
-            files_to_reference=files_to_reference,
-            workflow_type=args.workflow_type,
-            chunks=chunks or None,
-        )
-        print(f"Created spec: {spec_dir}")
+        if args.from_json:
+            # Multi-phase spec from JSON file
+            if not args.description:
+                # Description can come from JSON
+                pass
+            spec_dir = create_spec_from_json(
+                project_dir=args.project_dir,
+                name=args.name,
+                json_path=args.from_json,
+            )
+            print(f"Created multi-phase spec: {spec_dir}")
+        else:
+            # Simple single-phase spec
+            if not args.description:
+                print("Error: --description is required for simple specs (or use --from-json)", file=sys.stderr)
+                sys.exit(1)
+            spec_dir = create_spec(
+                project_dir=args.project_dir,
+                name=args.name,
+                description=args.description,
+                files_to_create=files_to_create,
+                files_to_modify=files_to_modify,
+                files_to_reference=files_to_reference,
+                workflow_type=args.workflow_type,
+                chunks=chunks or None,
+            )
+            print(f"Created spec: {spec_dir}")
         print("Refresh the GUI to see the new spec.")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
