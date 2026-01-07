@@ -5,6 +5,7 @@ CLI tool to add specs to Auto-Claude GUI.
 Creates all required spec files so the spec appears in the GUI.
 
 Usage:
+    # Simple single-phase spec:
     python add_spec.py --project-dir /path/to/project --name "feature-name" --description "What to build"
 
     # With more options:
@@ -16,6 +17,31 @@ Usage:
         --files-to-reference "docs/SPEC.md" \
         --workflow-type "feature" \
         --chunks "Create module structure,Implement core logic,Add tests"
+
+    # Multi-phase spec with dependencies (from JSON file):
+    python add_spec.py --project-dir /path/to/project --name "complex-feature" --from-json phases.json
+
+phases.json format:
+{
+  "description": "What to build",
+  "workflow_type": "feature",
+  "phases": [
+    {
+      "name": "Phase 1 Name",
+      "description": "What phase 1 does",
+      "chunks": [
+        {"description": "Task 1", "files": ["file1.py"], "verification": "How to verify"}
+      ]
+    },
+    {
+      "name": "Phase 2 Name",
+      "depends_on": [1],
+      "chunks": [
+        {"description": "Task 2", "files": ["file2.py"]}
+      ]
+    }
+  ]
+}
 """
 
 import argparse
