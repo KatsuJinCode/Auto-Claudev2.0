@@ -200,6 +200,7 @@ main (user's branch)
 3. User tests feature in `.worktrees/{spec-name}/`
 4. User runs `--merge` to add to their project
 5. User pushes to remote when ready
+6. **THEN** create next spec (new spec branches from updated main)
 
 ### Security Model
 
