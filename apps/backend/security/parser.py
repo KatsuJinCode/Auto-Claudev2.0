@@ -101,14 +101,19 @@ def _fallback_extract_commands(command_string: str) -> list[str]:
         # - Simple: python3, npm, git
         # - Unix path: /usr/bin/python
         # - Windows path: C:\Python312\python.exe
-        # - Quoted: "python.exe"
+        # - Quoted with spaces: "C:\Program Files\python.exe"
 
-        # First, try to get just the first whitespace-delimited token
-        first_token_match = re.match(r'^["\']?([^\s"\']+)', part)
+        # Extract first token, handling quoted strings with spaces
+        first_token_match = re.match(r'^(?:"([^"]+)"|\'([^\']+)\'|([^\s]+))', part)
         if not first_token_match:
             continue
 
-        first_token = first_token_match.group(1)
+        # Pick whichever capture group matched (double-quoted, single-quoted, or unquoted)
+        first_token = (
+            first_token_match.group(1)
+            or first_token_match.group(2)
+            or first_token_match.group(3)
+        )
 
         # Now extract just the command name from this token
         # Handle Windows paths (C:\dir\cmd.exe) and Unix paths (/dir/cmd)
