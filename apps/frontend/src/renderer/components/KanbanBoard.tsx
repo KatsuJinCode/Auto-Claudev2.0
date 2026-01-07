@@ -338,7 +338,18 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefreshClick
   return (
     <div className="flex h-full flex-col">
       {/* Kanban header with filters */}
-      <div className="flex items-center justify-end px-6 py-3 border-b border-border/50">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border/50">
+        {onRefreshClick && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+            onClick={onRefreshClick}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh Tasks
+          </Button>
+        )}
         <div className="flex items-center gap-2">
           <Checkbox
             id="showArchived"
