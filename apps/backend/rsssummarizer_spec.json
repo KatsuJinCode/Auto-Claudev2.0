@@ -1,0 +1,100 @@
+{
+  "description": "Eliminate Silent Failures: Systematic Error Handling & Observability Hardening - Fix 12 fallback patterns that hide degradation, make tool trustworthy and transparent",
+  "workflow_type": "refactor",
+  "phases": [
+    {
+      "name": "Critical LLM Provider Validation",
+      "description": "Validate LLM availability at startup before processing",
+      "chunks": [
+        {
+          "description": "Add LLM availability validation at startup in llm_providers.py - if unavailable, error immediately with setup instructions instead of degrading silently",
+          "files": ["src/llm_providers.py"],
+          "verification": "Running with no LLM configured shows clear error with setup instructions"
+        },
+        {
+          "description": "Update commands.py update pipeline to check LLM availability before processing - fail fast with clear message",
+          "files": ["src/commands.py"],
+          "verification": "rss update with no LLM fails immediately with actionable error"
+        }
+      ]
+    },
+    {
+      "name": "Core Feature Failure Transparency",
+      "description": "Replace silent fallbacks with explicit error reporting in clustering, perspectives, signal tagging",
+      "depends_on": [1],
+      "chunks": [
+        {
+          "description": "Story clustering: Add explicit error reporting when LLM-based similarity fails in clustering.py - remove silent fallback to keyword matching, track and surface degradation",
+          "files": ["src/clustering.py"],
+          "verification": "Clustering failure shows clear message about using keyword fallback"
+        },
+        {
+          "description": "Perspective generation: Replace generate_fallback_perspective() with clear error messages in perspectives.py - if LLM fails, user should know",
+          "files": ["src/perspectives.py"],
+          "verification": "Perspective generation failure shows explicit error, not silent empty result"
+        },
+        {
+          "description": "Signal tagging: When rule-based tagging replaces AI signal detection in signal_tagger.py, mark articles explicitly with processing mode",
+          "files": ["src/signal_tagger.py"],
+          "verification": "Articles show which mode processed them (AI vs rule-based)"
+        }
+      ]
+    },
+    {
+      "name": "Knowledge & Emergence Failure Reporting",
+      "description": "Surface failures in knowledge extraction and emergence detection",
+      "depends_on": [1],
+      "chunks": [
+        {
+          "description": "Knowledge extraction: Surface extraction failures to user in knowledge.py - don't pretend empty extraction succeeded, mark items with confidence metadata",
+          "files": ["src/knowledge.py"],
+          "verification": "Failed knowledge extraction shows error, not silent empty result"
+        },
+        {
+          "description": "Emergence detection: Integrate failure into returned data structure in trends.py - user sees 'emergence detection unavailable' not just empty trends",
+          "files": ["src/trends.py"],
+          "verification": "Failed emergence detection returns explicit unavailable status"
+        }
+      ]
+    },
+    {
+      "name": "Quality Observability Layer",
+      "description": "Add metadata tracking and CLI flags for visibility",
+      "depends_on": [2, 3],
+      "chunks": [
+        {
+          "description": "Create observability.py module for feature quality tracking - track which features used fallbacks vs full LLM processing",
+          "files": ["src/observability.py"],
+          "verification": "Module can track and report feature quality status"
+        },
+        {
+          "description": "Add CLI flags to cli.py: --verbose shows degradation warnings, --strict errors on any fallback",
+          "files": ["src/cli.py"],
+          "verification": "rss update --verbose shows quality warnings, --strict fails on fallback"
+        },
+        {
+          "description": "Update commands.py to include feature quality summary in build output",
+          "files": ["src/commands.py"],
+          "verification": "rss update output shows which features ran at full quality vs degraded"
+        }
+      ]
+    },
+    {
+      "name": "Documentation and Tests",
+      "description": "Document error handling strategy and add tests for error paths",
+      "depends_on": [4],
+      "chunks": [
+        {
+          "description": "Create docs/ERROR_HANDLING_STRATEGY.md documenting standardized error approach and all failure modes",
+          "files": ["docs/ERROR_HANDLING_STRATEGY.md"],
+          "verification": "Document exists with complete failure mode documentation"
+        },
+        {
+          "description": "Add tests for all error conditions in test_error_conditions.py - test each failure path explicitly",
+          "files": ["tests/test_error_conditions.py"],
+          "verification": "pytest tests/test_error_conditions.py passes with all error paths covered"
+        }
+      ]
+    }
+  ]
+}
