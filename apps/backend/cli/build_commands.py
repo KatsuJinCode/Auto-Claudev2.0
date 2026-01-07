@@ -61,6 +61,7 @@ def handle_build_command(
     skip_qa: bool,
     force_bypass_approval: bool,
     base_branch: str | None = None,
+    resume_session_id: str | None = None,
 ) -> None:
     """
     Handle the main build command.
@@ -77,6 +78,7 @@ def handle_build_command(
         skip_qa: Skip automatic QA validation
         force_bypass_approval: Force bypass approval check
         base_branch: Base branch for worktree creation (default: current branch)
+        resume_session_id: Optional Claude session ID to resume an interrupted session
     """
     # Lazy imports to avoid loading heavy modules
     from agent import run_autonomous_agent, sync_plan_to_source
@@ -231,6 +233,7 @@ def handle_build_command(
                 max_iterations=max_iterations,
                 verbose=verbose,
                 source_spec_dir=source_spec_dir,  # For syncing progress back to main project
+                resume_session_id=resume_session_id,  # Resume interrupted session if ID provided
             )
         )
         debug_success("run.py", "Agent execution completed")
@@ -305,6 +308,7 @@ def handle_build_command(
             model=model,
             max_iterations=max_iterations,
             verbose=verbose,
+            resume_session_id=resume_session_id,
         )
     except Exception as e:
         print(f"\nFatal error: {e}")
@@ -323,6 +327,7 @@ def _handle_build_interrupt(
     model: str,
     max_iterations: int | None,
     verbose: bool,
+    resume_session_id: str | None = None,
 ) -> None:
     """
     Handle keyboard interrupt during build.
@@ -335,6 +340,7 @@ def _handle_build_interrupt(
         model: Model being used
         max_iterations: Maximum iterations
         verbose: Verbose mode flag
+        resume_session_id: Optional Claude session ID to resume an interrupted session
     """
     from agent import run_autonomous_agent
 
@@ -441,6 +447,7 @@ def _handle_build_interrupt(
                     model=model,
                     max_iterations=max_iterations,
                     verbose=verbose,
+                    resume_session_id=resume_session_id,  # Resume interrupted session
                 )
             )
             # Build completed or was interrupted again - exit

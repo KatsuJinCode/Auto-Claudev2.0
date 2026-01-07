@@ -242,6 +242,14 @@ Environment Variables:
         help="Base branch for creating worktrees (default: auto-detect or current branch)",
     )
 
+    # Resume interrupted session
+    parser.add_argument(
+        "--resume-session",
+        type=str,
+        default=None,
+        help="Resume an interrupted Claude session by ID (enables recovery without starting fresh)",
+    )
+
     # Batch task management
     parser.add_argument(
         "--batch-create",
@@ -422,6 +430,7 @@ def main() -> None:
         skip_qa=args.skip_qa,
         force_bypass_approval=args.force,
         base_branch=args.base_branch,
+        resume_session_id=args.resume_session,  # Resume interrupted session if ID provided
     )
 
 

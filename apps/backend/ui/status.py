@@ -45,6 +45,7 @@ class BuildStatus:
     session_number: int = 0
     session_started: str = ""
     last_update: str = ""
+    claude_session_id: str = ""  # Claude CLI session ID for resume capability
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -71,6 +72,7 @@ class BuildStatus:
                 "number": self.session_number,
                 "started_at": self.session_started,
             },
+            "claude_session_id": self.claude_session_id,
             "last_update": self.last_update or datetime.now().isoformat(),
         }
 
@@ -98,6 +100,7 @@ class BuildStatus:
             session_number=session.get("number", 0),
             session_started=session.get("started_at", ""),
             last_update=data.get("last_update", ""),
+            claude_session_id=data.get("claude_session_id", ""),
         )
 
 
@@ -199,3 +202,64 @@ class StatusManager:
                 self.status_file.unlink()
             except OSError:
                 pass
+
+    def update_claude_session_id(self, session_id: str) -> None:
+        """Update the Claude CLI session ID for resume capability."""
+        self._status.claude_session_id = session_id
+        self.write()
+
+    def get_claude_session_id(self) -> str | None:
+        """Get the stored Claude CLI session ID."""
+        self.read()
+        return self._status.claude_session_id if self._status.claude_session_id else None
+
+
+def find_latest_claude_session(project_dir: Path) -> str | None:
+    """
+    Find the most recent Claude session ID for a project.
+
+    Claude stores sessions in ~/.claude/projects/<project-path-encoded>/<session-id>.jsonl
+
+    Args:
+        project_dir: The project directory to find sessions for
+
+    Returns:
+        The most recent session ID, or None if no sessions found
+    """
+    import os
+
+    # Get Claude home directory
+    home = Path.home()
+    claude_projects_dir = home / ".claude" / "projects"
+
+    if not claude_projects_dir.exists():
+        return None
+
+    # Claude encodes project paths by replacing path separators with dashes
+    # e.g., C:\Users\foo\project -> C--Users-foo-project
+    project_path_str = str(project_dir.resolve())
+    # Handle both Windows and Unix path separators
+    encoded_path = project_path_str.replace("\\", "-").replace("/", "-").replace(":", "-")
+
+    project_sessions_dir = claude_projects_dir / encoded_path
+
+    if not project_sessions_dir.exists():
+        return None
+
+    # Find all .jsonl session files (excluding agent-* files which are subagent sessions)
+    session_files = []
+    for f in project_sessions_dir.glob("*.jsonl"):
+        # Skip agent files and other non-session files
+        if f.name.startswith("agent-"):
+            continue
+        # Session files are UUID format (e.g., bf64a1ab-6ea1-4316-8442-9ee429a604a3.jsonl)
+        name = f.stem
+        if len(name) == 36 and name.count("-") == 4:
+            session_files.append(f)
+
+    if not session_files:
+        return None
+
+    # Return the most recently modified session
+    latest = max(session_files, key=lambda f: f.stat().st_mtime)
+    return latest.stem  # Return session ID without .jsonl extension

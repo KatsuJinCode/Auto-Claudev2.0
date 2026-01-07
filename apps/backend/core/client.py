@@ -135,6 +135,7 @@ def create_client(
     model: str,
     agent_type: str = "coder",
     max_thinking_tokens: int | None = None,
+    resume_session_id: str | None = None,
 ) -> ClaudeSDKClient:
     """
     Create a Claude Agent SDK client with multi-layered security.
@@ -150,6 +151,9 @@ def create_client(
                             - high: 10000 (QA review)
                             - medium: 5000 (planning, validation)
                             - None: disabled (coding)
+        resume_session_id: Optional session ID to resume a previous interrupted session.
+                          When provided, the SDK will continue the conversation from where
+                          it left off instead of starting fresh.
 
     Returns:
         Configured ClaudeSDKClient
@@ -335,6 +339,10 @@ def create_client(
         if auto_claude_mcp_server:
             mcp_servers["auto-claude"] = auto_claude_mcp_server
 
+    # Log if resuming a previous session
+    if resume_session_id:
+        print(f"   - Resuming session: {resume_session_id}")
+
     return ClaudeSDKClient(
         options=ClaudeAgentOptions(
             model=model,
@@ -360,5 +368,6 @@ def create_client(
             settings=str(settings_file.resolve()),
             env=sdk_env,  # Pass ANTHROPIC_BASE_URL etc. to subprocess
             max_thinking_tokens=max_thinking_tokens,  # Extended thinking budget
+            resume=resume_session_id,  # Resume interrupted session if ID provided
         )
     )

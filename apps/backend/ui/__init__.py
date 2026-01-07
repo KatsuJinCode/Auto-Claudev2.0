@@ -48,7 +48,7 @@ from .icons import Icons, icon
 from .menu import MenuOption, select_menu
 from .progress import progress_bar
 from .spinner import Spinner
-from .status import BuildState, BuildStatus, StatusManager
+from .status import BuildState, BuildStatus, StatusManager, find_latest_claude_session
 
 # For backward compatibility
 _FANCY_UI = FANCY_UI
@@ -95,6 +95,7 @@ __all__ = [
     "BuildState",
     "BuildStatus",
     "StatusManager",
+    "find_latest_claude_session",
     # Formatters
     "print_header",
     "print_section",

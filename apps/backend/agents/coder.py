@@ -46,6 +46,7 @@ from ui import (
     StatusManager,
     bold,
     box,
+    find_latest_claude_session,
     highlight,
     icon,
     muted,
@@ -74,6 +75,7 @@ async def run_autonomous_agent(
     max_iterations: int | None = None,
     verbose: bool = False,
     source_spec_dir: Path | None = None,
+    resume_session_id: str | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -88,6 +90,7 @@ async def run_autonomous_agent(
         max_iterations: Maximum number of iterations (None for unlimited)
         verbose: Whether to show detailed output
         source_spec_dir: Original spec directory in main project (for syncing from worktree)
+        resume_session_id: Optional Claude CLI session ID to resume a previous interrupted session
     """
     # Initialize recovery manager (handles memory persistence)
     recovery_manager = RecoveryManager(spec_dir, project_dir)
@@ -251,12 +254,15 @@ async def run_autonomous_agent(
         phase_model = get_phase_model(spec_dir, current_phase, model)
         phase_thinking_budget = get_phase_thinking_budget(spec_dir, current_phase)
 
-        # Create client (fresh context) with phase-specific model and thinking
+        # Create client with phase-specific model and thinking
+        # On first iteration, try to resume previous session if ID provided
+        session_to_resume = resume_session_id if iteration == 1 else None
         client = create_client(
             project_dir,
             spec_dir,
             phase_model,
             max_thinking_tokens=phase_thinking_budget,
+            resume_session_id=session_to_resume,
         )
 
         # Generate appropriate prompt
@@ -339,6 +345,12 @@ async def run_autonomous_agent(
             status, response = await run_agent_session(
                 client, prompt, spec_dir, verbose, phase=current_log_phase
             )
+
+        # Capture and store Claude session ID for potential resume
+        # This enables recovering stuck tasks by resuming the interrupted session
+        latest_session = find_latest_claude_session(project_dir)
+        if latest_session:
+            status_manager.update_claude_session_id(latest_session)
 
         # === POST-SESSION PROCESSING (100% reliable) ===
         if subtask_id and not first_run:
