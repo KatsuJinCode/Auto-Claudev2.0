@@ -198,6 +198,11 @@ export class AgentManager extends EventEmitter {
       args.push('--base-branch', options.baseBranch);
     }
 
+    // Pass resume session ID if specified (to resume an interrupted Claude session)
+    if (options.resumeSessionId) {
+      args.push('--resume-session', options.resumeSessionId);
+    }
+
     // Note: --parallel was removed from run.py CLI - parallel execution is handled internally by the agent
     // The options.parallel and options.workers are kept for future use or logging purposes
     // Note: Model configuration is read from task_metadata.json by the Python scripts,
