@@ -174,7 +174,6 @@ describe('runPythonSubprocess', () => {
     it('fallback env should include platform-specific vars on Windows', () => {
       // Arrange
       const originalEnv = process.env;
-      const originalPlatform = process.platform;
 
       process.env = {
         PATH: 'C:\\Windows\\System32',
