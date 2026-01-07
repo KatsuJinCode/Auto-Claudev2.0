@@ -169,6 +169,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
 /**
  * Load tasks for a project
+ * Preserves in-memory execution state for running tasks to prevent
+ * status from reverting when switching between projects.
  */
 export async function loadTasks(projectId: string): Promise<void> {
   const store = useTaskStore.getState();
@@ -178,7 +180,33 @@ export async function loadTasks(projectId: string): Promise<void> {
   try {
     const result = await window.electronAPI.getTasks(projectId);
     if (result.success && result.data) {
-      store.setTasks(result.data);
+      // Get existing tasks to preserve execution state
+      const existingTasks = store.tasks;
+
+      // Merge: use disk data but preserve execution state for tasks that are running
+      const mergedTasks = result.data.map(diskTask => {
+        const existingTask = existingTasks.find(t => t.id === diskTask.id || t.specId === diskTask.specId);
+
+        // If task exists in memory and has active execution state, preserve it
+        if (existingTask && existingTask.executionProgress) {
+          const isRunning = existingTask.executionProgress.phase !== 'idle' &&
+                           existingTask.executionProgress.phase !== undefined;
+
+          if (isRunning) {
+            // Preserve the in-memory status and execution progress
+            return {
+              ...diskTask,
+              status: existingTask.status,
+              executionProgress: existingTask.executionProgress,
+              logs: existingTask.logs || diskTask.logs
+            };
+          }
+        }
+
+        return diskTask;
+      });
+
+      store.setTasks(mergedTasks);
     } else {
       store.setError(result.error || 'Failed to load tasks');
     }
