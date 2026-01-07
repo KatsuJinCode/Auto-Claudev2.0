@@ -35,6 +35,8 @@ try:
     from ..context_gatherer import _validate_git_ref
     from ..gh_client import GHClient
     from ..models import (
+        BRANCH_BEHIND_BLOCKER_MSG,
+        BRANCH_BEHIND_REASONING,
         GitHubRunnerConfig,
         MergeVerdict,
         PRReviewFinding,
@@ -50,6 +52,8 @@ except (ImportError, ValueError, SystemError):
     from core.client import create_client
     from gh_client import GHClient
     from models import (
+        BRANCH_BEHIND_BLOCKER_MSG,
+        BRANCH_BEHIND_REASONING,
         GitHubRunnerConfig,
         MergeVerdict,
         PRReviewFinding,
@@ -603,17 +607,15 @@ The SDK will run invoked agents in parallel automatically.
                 )
             # Check if branch is behind base (out of date) - warning, not hard blocker
             elif context.merge_state_status == "BEHIND":
-                blockers.append(
-                    "Branch Out of Date: PR branch is behind the base branch and needs to be updated"
-                )
+                blockers.append(BRANCH_BEHIND_BLOCKER_MSG)
                 # Use NEEDS_REVISION since potential conflicts are unknown until branch is updated
-                if verdict == MergeVerdict.READY_TO_MERGE:
+                # Must handle both READY_TO_MERGE and MERGE_WITH_CHANGES verdicts
+                if verdict in (
+                    MergeVerdict.READY_TO_MERGE,
+                    MergeVerdict.MERGE_WITH_CHANGES,
+                ):
                     verdict = MergeVerdict.NEEDS_REVISION
-                    verdict_reasoning = (
-                        "Branch is out of date with base branch. Update branch first - "
-                        "if no conflicts arise, you can merge. If merge conflicts arise, "
-                        "resolve them and run follow-up review again."
-                    )
+                    verdict_reasoning = BRANCH_BEHIND_REASONING
                 print(
                     "[ParallelFollowup] ⚠️ PR branch is behind base - needs update",
                     flush=True,

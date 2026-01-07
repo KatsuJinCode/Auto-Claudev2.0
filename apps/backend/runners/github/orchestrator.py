@@ -24,6 +24,8 @@ try:
     from .context_gatherer import PRContext, PRContextGatherer
     from .gh_client import GHClient
     from .models import (
+        BRANCH_BEHIND_BLOCKER_MSG,
+        BRANCH_BEHIND_REASONING,
         AICommentTriage,
         AICommentVerdict,
         AutoFixState,
@@ -50,6 +52,8 @@ except (ImportError, ValueError, SystemError):
     from context_gatherer import PRContext, PRContextGatherer
     from gh_client import GHClient
     from models import (
+        BRANCH_BEHIND_BLOCKER_MSG,
+        BRANCH_BEHIND_REASONING,
         AICommentTriage,
         AICommentVerdict,
         AutoFixState,
@@ -828,9 +832,7 @@ class GitHubOrchestrator:
             )
         # Branch behind base is a warning, not a hard blocker
         elif is_branch_behind:
-            blockers.append(
-                "Branch Out of Date: PR branch is behind the base branch and needs to be updated"
-            )
+            blockers.append(BRANCH_BEHIND_BLOCKER_MSG)
 
         # Count by severity
         critical = [f for f in findings if f.severity == ReviewSeverity.CRITICAL]
@@ -958,11 +960,9 @@ class GitHubOrchestrator:
             # Branch behind is a soft blocker - NEEDS_REVISION, not BLOCKED
             elif is_branch_behind:
                 verdict = MergeVerdict.NEEDS_REVISION
-                reasoning = (
-                    "Branch is out of date with base branch. Update branch first - "
-                    "if no conflicts arise, you can merge. If merge conflicts arise, "
-                    "resolve them and run follow-up review again."
-                )
+                reasoning = BRANCH_BEHIND_REASONING
+                if low:
+                    reasoning += f" {len(low)} non-blocking suggestion(s) to consider."
             else:
                 verdict = MergeVerdict.NEEDS_REVISION
                 reasoning = f"{len(blockers)} issues must be addressed"
@@ -973,16 +973,6 @@ class GitHubOrchestrator:
             reasoning = f"{total} issue(s) must be addressed ({len(high)} required, {len(medium)} recommended)"
             if low:
                 reasoning += f", {len(low)} suggestions"
-        # Check for branch behind even when no other blockers
-        elif is_branch_behind:
-            verdict = MergeVerdict.NEEDS_REVISION
-            reasoning = (
-                "Branch is out of date with base branch. Update branch first - "
-                "if no conflicts arise, you can merge. If merge conflicts arise, "
-                "resolve them and run follow-up review again."
-            )
-            if low:
-                reasoning += f" {len(low)} non-blocking suggestion(s) to consider."
         elif low:
             # Only Low severity suggestions - safe to merge (non-blocking)
             verdict = MergeVerdict.READY_TO_MERGE
