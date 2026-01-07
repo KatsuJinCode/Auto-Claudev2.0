@@ -407,6 +407,11 @@ def main():
         default="",
         help="Comma-separated list of implementation chunks/subtasks"
     )
+    parser.add_argument(
+        "--from-json", "-j",
+        default="",
+        help="Path to JSON file defining multi-phase spec (see docstring for format)"
+    )
 
     args = parser.parse_args()
 
