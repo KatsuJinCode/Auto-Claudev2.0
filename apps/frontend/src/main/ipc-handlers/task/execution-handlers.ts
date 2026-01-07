@@ -762,14 +762,31 @@ export function registerTaskExecutionHandlers(
               agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDirForWatcher, task.metadata);
             } else {
               // Spec exists - run task execution
-              console.warn(`[Recovery] Starting task execution for: ${task.specId}`);
+              // Try to read stored Claude session ID from .auto-claude-status for resume capability
+              let resumeSessionId: string | undefined;
+              const statusFilePath = path.join(project.path, '.auto-claude-status');
+              try {
+                if (existsSync(statusFilePath)) {
+                  const statusContent = readFileSync(statusFilePath, 'utf-8');
+                  const statusData = JSON.parse(statusContent);
+                  if (statusData.claude_session_id) {
+                    resumeSessionId = statusData.claude_session_id;
+                    console.warn(`[Recovery] Found stored Claude session ID: ${resumeSessionId}`);
+                  }
+                }
+              } catch {
+                // Ignore errors reading status file
+              }
+
+              console.warn(`[Recovery] Starting task execution for: ${task.specId}${resumeSessionId ? ' (resuming session)' : ''}`);
               agentManager.startTaskExecution(
                 taskId,
                 project.path,
                 task.specId,
                 {
                   parallel: false,
-                  workers: 1
+                  workers: 1,
+                  resumeSessionId  // Resume the interrupted session if available
                 }
               );
             }
