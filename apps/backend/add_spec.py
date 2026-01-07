@@ -378,8 +378,8 @@ def main():
     )
     parser.add_argument(
         "--description", "-d",
-        required=True,
-        help="Task description"
+        default="",
+        help="Task description (required for simple specs, optional with --from-json)"
     )
     parser.add_argument(
         "--files-to-create", "-c",
