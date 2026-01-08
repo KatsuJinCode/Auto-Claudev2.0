@@ -200,6 +200,38 @@ app.whenReady().then(() => {
     }
   }
 
+  // Discover and reconnect to running agents from previous session
+  // This enables GUI to reconnect to detached agents that survived a restart
+  if (agentManager) {
+    const discovery = agentManager.discoverRunningAgents();
+
+    if (discovery.validAgents.length > 0) {
+      console.warn('[main] Discovered running agents:', discovery.validAgents.length);
+      for (const agent of discovery.validAgents) {
+        console.warn(`[main]   - ${agent.specId} (PID: ${agent.pid})`);
+
+        // Auto-reconnect to valid agents to resume status updates
+        const result = agentManager.reconnectToAgent(agent, { seekToEnd: true });
+        if (result.success) {
+          console.warn(`[main]   Reconnected to agent: ${agent.specId}`);
+        } else {
+          console.warn(`[main]   Failed to reconnect: ${result.error}`);
+        }
+      }
+    }
+
+    if (discovery.staleAgents.length > 0) {
+      console.warn('[main] Found stale agent entries:', discovery.staleAgents.length);
+      for (const { entry, reason } of discovery.staleAgents) {
+        console.warn(`[main]   - ${entry.specId}: ${reason}`);
+      }
+    }
+
+    if (discovery.totalInRegistry === 0) {
+      console.warn('[main] No agents found in registry');
+    }
+  }
+
   // macOS: re-create window when dock icon is clicked
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
