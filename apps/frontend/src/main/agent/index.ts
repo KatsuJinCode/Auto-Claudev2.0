@@ -23,7 +23,9 @@ export type {
   DiscoveredAgent,
   DiscoveryResult,
   ReconnectionOptions,
-  ReconnectResult
+  ReconnectResult,
+  StopAgentOptions,
+  StopAgentResult
 } from './agent-manager';
 
 export type {

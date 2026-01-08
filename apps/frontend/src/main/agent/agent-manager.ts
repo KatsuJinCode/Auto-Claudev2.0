@@ -3,7 +3,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
-import { AgentProcessManager } from './agent-process';
+import { AgentProcessManager, killAgentProcess, forceKillAgentProcess } from './agent-process';
 import { AgentQueueManager } from './agent-queue';
 import { getAgentRegistry, AgentRegistryEntry } from './agent-registry';
 import { FileOutputStreamer, createFileOutputStreamer } from './file-output-streamer';
@@ -60,6 +60,40 @@ export interface ReconnectResult {
   taskId: string;
   /** Error message if reconnection failed */
   error?: string;
+}
+
+/**
+ * Options for stopping a running agent
+ */
+export interface StopAgentOptions {
+  /**
+   * Whether to force kill the agent if it doesn't respond to graceful shutdown.
+   * If true, waits for gracefulTimeout then uses SIGKILL/taskkill.
+   * Defaults to true.
+   */
+  forceIfNeeded?: boolean;
+  /**
+   * Timeout in milliseconds to wait for graceful shutdown before force kill.
+   * Only used when forceIfNeeded is true.
+   * Defaults to 5000 (5 seconds).
+   */
+  gracefulTimeout?: number;
+}
+
+/**
+ * Result from stopping an agent
+ */
+export interface StopAgentResult {
+  /** Whether the agent was successfully stopped */
+  success: boolean;
+  /** The task ID of the stopped agent */
+  taskId: string;
+  /** Method used to stop: 'graceful', 'force', 'already_stopped', 'not_found' */
+  method: 'graceful' | 'force' | 'already_stopped' | 'not_found' | 'error';
+  /** Error message if the stop failed */
+  error?: string;
+  /** Time in milliseconds it took to stop the agent */
+  elapsedMs?: number;
 }
 
 /**
@@ -638,6 +672,249 @@ export class AgentManager extends EventEmitter {
     }
 
     return disconnectedCount;
+  }
+
+  /**
+   * Stop a running detached agent with graceful shutdown
+   *
+   * This method is the explicit "Stop" button behavior for detached agents.
+   * It sends a graceful shutdown signal (SIGTERM on Unix, SIGBREAK/CTRL_BREAK_EVENT on Windows)
+   * and optionally force kills if the process doesn't respond within the timeout.
+   *
+   * The method:
+   * 1. Validates the agent is being monitored (reconnected)
+   * 2. Sends graceful shutdown signal via killAgentProcess()
+   * 3. Optionally waits and force kills via forceKillAgentProcess() if needed
+   * 4. Disconnects from the agent (stops output file tailing)
+   * 5. Updates registry status (handled by PID monitoring or explicit cleanup)
+   *
+   * Note: Registry cleanup and lockfile deletion are handled by subtask 6.3.
+   * This method focuses on the stop signal and monitoring cleanup.
+   *
+   * @param taskId - The task ID of the agent to stop (must be reconnected)
+   * @param options - Options for the stop operation
+   * @returns Promise resolving to StopAgentResult
+   *
+   * @example
+   * // Graceful stop with default 5 second timeout then force kill
+   * const result = await agentManager.stopAgent('my-task');
+   *
+   * @example
+   * // Graceful stop only (no force kill)
+   * const result = await agentManager.stopAgent('my-task', { forceIfNeeded: false });
+   *
+   * @example
+   * // Quick force kill after 2 seconds
+   * const result = await agentManager.stopAgent('my-task', { gracefulTimeout: 2000 });
+   */
+  async stopAgent(taskId: string, options: StopAgentOptions = {}): Promise<StopAgentResult> {
+    const { forceIfNeeded = true, gracefulTimeout = 5000 } = options;
+    const startTime = Date.now();
+
+    // Check if this is a reconnected agent we're monitoring
+    const reconnectedAgent = this.reconnectedAgents.get(taskId);
+    if (!reconnectedAgent) {
+      // Check if it's a locally spawned task (handled by killTask)
+      if (this.state.hasProcess(taskId)) {
+        // Delegate to existing killTask method for locally spawned processes
+        const killed = this.killTask(taskId);
+        return {
+          success: killed,
+          taskId,
+          method: killed ? 'graceful' : 'error',
+          error: killed ? undefined : 'Failed to kill locally spawned process',
+          elapsedMs: Date.now() - startTime
+        };
+      }
+
+      return {
+        success: false,
+        taskId,
+        method: 'not_found',
+        error: `Agent with taskId '${taskId}' is not being monitored. ` +
+               'Use reconnectToAgent() first or verify the taskId is correct.',
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    const { entry } = reconnectedAgent;
+    const pid = entry.pid;
+
+    // Validate the agent is still alive
+    const registry = getAgentRegistry();
+    const validation = registry.isAgentAlive(entry.specId);
+
+    if (!validation.alive) {
+      // Agent is already dead - clean up monitoring
+      this.disconnectFromAgent(taskId);
+      return {
+        success: true,
+        taskId,
+        method: 'already_stopped',
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    // Send graceful shutdown signal
+    const gracefulResult = killAgentProcess(pid);
+
+    if (!gracefulResult.success) {
+      // Failed to send signal - this is an error condition
+      // Still disconnect from monitoring
+      this.disconnectFromAgent(taskId);
+      return {
+        success: false,
+        taskId,
+        method: 'error',
+        error: gracefulResult.error || 'Failed to send graceful shutdown signal',
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    // If the process was already terminated (ESRCH), we're done
+    if (gracefulResult.terminated) {
+      this.disconnectFromAgent(taskId);
+      return {
+        success: true,
+        taskId,
+        method: 'already_stopped',
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    // Wait for graceful shutdown if force kill is enabled
+    if (forceIfNeeded) {
+      // Wait for process to exit gracefully within timeout
+      const waitStartTime = Date.now();
+      let processExited = false;
+
+      while (Date.now() - waitStartTime < gracefulTimeout) {
+        const stillAlive = registry.isAgentAlive(entry.specId);
+        if (!stillAlive.alive) {
+          processExited = true;
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      if (!processExited) {
+        // Process didn't exit gracefully, force kill it
+        const forceResult = await forceKillAgentProcess(pid, {
+          gracefulFirst: false // Skip graceful since we already tried
+        });
+
+        this.disconnectFromAgent(taskId);
+
+        return {
+          success: forceResult.success,
+          taskId,
+          method: 'force',
+          error: forceResult.error,
+          elapsedMs: Date.now() - startTime
+        };
+      }
+
+      // Process exited gracefully
+      this.disconnectFromAgent(taskId);
+      return {
+        success: true,
+        taskId,
+        method: 'graceful',
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    // No force kill requested - just disconnect after sending graceful signal
+    // The agent may or may not stop (we won't wait to find out)
+    this.disconnectFromAgent(taskId);
+
+    return {
+      success: true,
+      taskId,
+      method: 'graceful',
+      elapsedMs: Date.now() - startTime
+    };
+  }
+
+  /**
+   * Stop a running detached agent by specId (convenience method)
+   *
+   * This is a convenience wrapper around stopAgent() that looks up the agent
+   * by specId and stops it. Useful when you have the specId but not the taskId.
+   *
+   * @param specId - The spec ID of the agent to stop
+   * @param options - Options for the stop operation
+   * @returns Promise resolving to StopAgentResult
+   */
+  async stopAgentBySpecId(specId: string, options: StopAgentOptions = {}): Promise<StopAgentResult> {
+    // Find the reconnected agent with this specId
+    for (const [taskId, agent] of this.reconnectedAgents) {
+      if (agent.entry.specId === specId) {
+        return this.stopAgent(taskId, options);
+      }
+    }
+
+    // Check if there's a registry entry for this specId even if not reconnected
+    const registry = getAgentRegistry();
+    const entry = registry.get(specId);
+
+    if (!entry) {
+      return {
+        success: false,
+        taskId: specId,
+        method: 'not_found',
+        error: `No agent found with specId '${specId}'`
+      };
+    }
+
+    // Agent exists in registry but not reconnected - try to kill by PID directly
+    const validation = registry.isAgentAlive(specId);
+
+    if (!validation.alive) {
+      return {
+        success: true,
+        taskId: specId,
+        method: 'already_stopped'
+      };
+    }
+
+    // Kill by PID directly
+    const { forceIfNeeded = true, gracefulTimeout = 5000 } = options;
+    const startTime = Date.now();
+
+    const gracefulResult = killAgentProcess(entry.pid);
+
+    if (gracefulResult.terminated) {
+      return {
+        success: true,
+        taskId: specId,
+        method: 'already_stopped',
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    if (forceIfNeeded && gracefulResult.success) {
+      const forceResult = await forceKillAgentProcess(entry.pid, {
+        gracefulFirst: false, // Already sent graceful signal
+        gracefulTimeout
+      });
+
+      return {
+        success: forceResult.success,
+        taskId: specId,
+        method: forceResult.method === 'graceful' ? 'graceful' : 'force',
+        error: forceResult.error,
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    return {
+      success: gracefulResult.success,
+      taskId: specId,
+      method: 'graceful',
+      error: gracefulResult.error,
+      elapsedMs: Date.now() - startTime
+    };
   }
 
   /**
