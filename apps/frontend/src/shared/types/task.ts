@@ -6,6 +6,9 @@ import type { ThinkingLevel, PhaseModelConfig, PhaseThinkingConfig } from './set
 
 export type TaskStatus = 'backlog' | 'in_progress' | 'ai_review' | 'human_review' | 'done';
 
+// Supported AI agent backends for task execution
+export type AgentType = 'claude' | 'gemini' | 'opencode';
+
 // Reason why a task is in human_review status
 // - 'completed': All subtasks done and QA passed, ready for final approval/merge
 // - 'errors': Subtasks failed during execution
@@ -246,6 +249,7 @@ export interface Task {
   stagedAt?: string;  // ISO timestamp when changes were staged
   location?: 'main' | 'worktree';  // Where task was loaded from (main project or worktree)
   specsPath?: string;  // Full path to specs directory for this task
+  agentType?: AgentType;  // AI agent backend used for this task (claude, gemini, opencode)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -440,4 +444,5 @@ export interface TaskStartOptions {
   workers?: number;
   model?: string;
   baseBranch?: string; // Override base branch for worktree creation
+  agentType?: AgentType; // AI agent backend to use (claude, gemini, opencode)
 }
