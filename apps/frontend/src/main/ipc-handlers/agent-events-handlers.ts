@@ -94,24 +94,37 @@ export function registerAgenteventsHandlers(
 
       // Determine new status based on process type and exit code
       // Flow: Planning → In Progress → AI Review (QA agent) → Human Review (QA passed)
+      // IMPORTANT: Only move to human_review on SUCCESS. Failures should stay in_progress
+      // so the task can be investigated and retried.
       let newStatus: TaskStatus;
 
       if (processType === 'task-execution') {
         // Task execution completed (includes spec_runner → run.py chain)
-        // Success (code 0) = QA agent signed off → Human Review
-        // Failure = needs human attention → Human Review
-        newStatus = 'human_review';
+        // Success (code 0) = completed successfully → Human Review
+        // Failure (code != 0) = error occurred → stay in_progress for retry
+        if (code === 0) {
+          newStatus = 'human_review';
+        } else {
+          console.warn(`[Task ${taskId}] Task execution failed with code ${code}, keeping in_progress for retry`);
+          return; // Don't change status on failure
+        }
       } else if (processType === 'qa-process') {
         // QA retry process completed
-        newStatus = 'human_review';
+        if (code === 0) {
+          newStatus = 'human_review';
+        } else {
+          console.warn(`[Task ${taskId}] QA process failed with code ${code}, keeping in_progress for retry`);
+          return; // Don't change status on failure
+        }
       } else if (processType === 'spec-creation') {
         // Pure spec creation (shouldn't happen with current flow, but handle it)
         // Stay in backlog/planning
         console.warn(`[Task ${taskId}] Spec creation completed with code ${code}`);
         return;
       } else {
-        // Unknown process type
-        newStatus = 'human_review';
+        // Unknown process type - don't change status
+        console.warn(`[Task ${taskId}] Unknown process type ${processType}, not changing status`);
+        return;
       }
 
       // Find task and project for status persistence and notifications
