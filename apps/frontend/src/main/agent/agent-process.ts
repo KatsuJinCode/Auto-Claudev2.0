@@ -256,6 +256,15 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
     throw new Error('Failed to spawn agent process: no PID returned');
   }
 
+  // Allow the parent process (GUI) to exit without waiting for this child
+  // This is critical for detached processes - without unref(), Node will keep
+  // the parent alive until the child exits, defeating the purpose of detached: true
+  //
+  // Per Node.js docs: "By default, the parent will wait for the detached child to exit.
+  // To prevent the parent from waiting for a given subprocess to exit, use the
+  // subprocess.unref() method."
+  childProcess.unref();
+
   // Register agent in registry (unless explicitly disabled)
   // This enables the GUI to discover and reconnect to this agent after restart
   const shouldRegister = options.registerInRegistry !== false;
