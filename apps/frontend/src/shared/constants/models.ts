@@ -137,3 +137,17 @@ export const MEMORY_BACKENDS = [
   { value: 'file', label: 'File-based (default)' },
   { value: 'graphiti', label: 'Graphiti (LadybugDB)' }
 ] as const;
+
+// ============================================
+// AI Agent Backends
+// ============================================
+
+// Available AI agent backends for task execution
+export const AVAILABLE_AGENTS = [
+  { value: 'claude', label: 'Claude', description: 'Anthropic Claude (default)' },
+  { value: 'gemini', label: 'Gemini', description: 'Google Gemini CLI' },
+  { value: 'opencode', label: 'OpenCode', description: 'OpenCode CLI' }
+] as const;
+
+// Type for agent backend values
+export type AgentBackend = typeof AVAILABLE_AGENTS[number]['value'];

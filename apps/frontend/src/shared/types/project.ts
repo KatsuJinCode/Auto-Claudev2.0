@@ -14,6 +14,8 @@ export interface Project {
 
 export interface ProjectSettings {
   model: string;
+  /** Default AI agent backend for this project (claude, gemini, opencode) */
+  defaultAgent?: 'claude' | 'gemini' | 'opencode';
   memoryBackend: 'graphiti' | 'file';
   linearSync: boolean;
   linearTeamId?: string;
