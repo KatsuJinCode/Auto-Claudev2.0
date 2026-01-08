@@ -50,6 +50,8 @@ from ui import (
     print_status,
 )
 
+from services.task_recovery import touch_activity
+
 from .memory_manager import save_session_memory
 from .utils import (
     find_subtask_in_plan,
@@ -302,6 +304,11 @@ class HeartbeatWriter:
             logger.warning(f"Heartbeat write failed for {self.spec_id}: {error}")
         else:
             logger.debug(f"Heartbeat written for {self.spec_id} at {data['timestamp']}")
+
+        # Also update the task activity marker to prevent zombie detection
+        # This runs every 30 seconds during coding sessions, which is well within
+        # the 2-hour zombie threshold
+        touch_activity(self.spec_id, self.working_directory)
 
     async def start(self) -> None:
         """Start the heartbeat background task."""
