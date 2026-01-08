@@ -517,7 +517,7 @@ def _create_worktree(base_dir: Path, task_id: str, base_branch: str | None = Non
         return False
 
 
-def touch_activity(base_dir: Path, task_id: str) -> bool:
+def touch_activity(task_id: str, base_dir: Path) -> bool:
     """
     Update activity marker to prevent zombie detection.
 
@@ -526,15 +526,15 @@ def touch_activity(base_dir: Path, task_id: str) -> bool:
     (every 5-10 minutes) during coding to signal they are still alive.
 
     Args:
-        base_dir: Project root directory containing the .worktrees folder.
         task_id: Unique identifier for the task (spec name).
+        base_dir: Project root directory containing the .worktrees folder.
 
     Returns:
         True if marker was touched successfully, False on error.
 
     Example:
         # Worker should call periodically during long operations
-        touch_activity(Path("/project"), "my-task")
+        touch_activity("my-task", Path("/project"))
     """
     activity_marker = base_dir / ".worktrees" / task_id / ACTIVITY_MARKER_FILE
 
@@ -637,7 +637,7 @@ def start_coding(
             return START_CODING_WORKTREE_FAILED
 
         # Create activity marker
-        touch_activity(base_dir, task_id)
+        touch_activity(task_id, base_dir)
 
         # Update state to coding
         state.status = "coding"
