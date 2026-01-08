@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive } from 'lucide-react';
+import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -43,8 +43,13 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
   const [isRecovering, setIsRecovering] = useState(false);
 
   const isRunning = task.status === 'in_progress';
+  const isBlocked = task.status === 'blocked';
   const executionPhase = task.executionProgress?.phase;
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
+
+  // Get dependency names for blocked tasks
+  // Uses depends_on field (when available) or falls back to metadata.dependencies
+  const blockedByDependencies = (task as { depends_on?: string[] }).depends_on || task.metadata?.dependencies || [];
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);
@@ -122,6 +127,8 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
     switch (status) {
       case 'in_progress':
         return 'info';
+      case 'blocked':
+        return 'warning';
       case 'ai_review':
         return 'warning';
       case 'human_review':
@@ -137,6 +144,8 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
     switch (status) {
       case 'in_progress':
         return 'Running';
+      case 'blocked':
+        return 'Blocked';
       case 'ai_review':
         return 'AI Review';
       case 'human_review':
@@ -174,6 +183,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
         'card-surface task-card-enhanced cursor-pointer',
         isRunning && !isStuck && 'ring-2 ring-primary border-primary task-running-pulse',
         isStuck && 'ring-2 ring-warning border-warning task-stuck-pulse',
+        isBlocked && 'ring-2 ring-orange-500/50 border-orange-500/50',
         isArchived && 'opacity-60 hover:opacity-80'
       )}
       onClick={onClick}
@@ -206,6 +216,17 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
               >
                 <AlertTriangle className="h-2.5 w-2.5" />
                 Incomplete
+              </Badge>
+            )}
+            {/* Blocked indicator - task has unmet dependencies */}
+            {isBlocked && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-orange-500/10 text-orange-400 border-orange-500/30"
+                title={blockedByDependencies.length > 0 ? `Blocked by: ${blockedByDependencies.join(', ')}` : 'Blocked by unmet dependencies'}
+              >
+                <Ban className="h-2.5 w-2.5" />
+                Blocked
               </Badge>
             )}
             {/* Archived indicator - task has been released */}
@@ -257,6 +278,19 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
           <p className="mt-2 text-xs text-muted-foreground line-clamp-2">
             {sanitizeMarkdownForDisplay(task.description, 150)}
           </p>
+        )}
+
+        {/* Blocked dependencies info */}
+        {isBlocked && blockedByDependencies.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-orange-400">
+            <Ban className="h-3 w-3 shrink-0" />
+            <span className="text-muted-foreground">Waiting for:</span>
+            {blockedByDependencies.map((dep, index) => (
+              <span key={dep} className="font-medium">
+                {dep}{index < blockedByDependencies.length - 1 ? ',' : ''}
+              </span>
+            ))}
+          </div>
         )}
 
         {/* Metadata badges */}
@@ -336,7 +370,12 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
           </div>
 
           {/* Action buttons */}
-          {isStuck ? (
+          {isBlocked ? (
+            <div className="flex items-center gap-1.5 text-xs text-orange-400">
+              <Ban className="h-3 w-3" />
+              <span>Dependencies unmet</span>
+            </div>
+          ) : isStuck ? (
             <Button
               variant="warning"
               size="sm"
