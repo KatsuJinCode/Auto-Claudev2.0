@@ -55,6 +55,13 @@ from ui import (
     print_status,
 )
 
+from services.task_recovery import (
+    RECOVERY_ACTION_LOCK_FAILED,
+    RECOVERY_ACTION_MARK_FAILED,
+    RECOVERY_ACTION_NONE,
+    recover_if_stuck,
+)
+
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
 from .memory_manager import debug_memory_system_status, get_graphiti_context
 from .session import post_session_processing, run_agent_session
@@ -206,6 +213,34 @@ async def run_autonomous_agent(
 
     while True:
         iteration += 1
+
+        # === STUCK TASK RECOVERY CHECK ===
+        # Run recovery before each iteration to detect and fix state/filesystem mismatches
+        task_id_for_recovery = spec_dir.name
+        recovery_action = recover_if_stuck(task_id_for_recovery, project_dir)
+
+        if recovery_action == RECOVERY_ACTION_LOCK_FAILED:
+            logger.warning(
+                f"RECOVERY_LOCK_FAILED {task_id_for_recovery}: "
+                "could not acquire lock, will retry next cycle"
+            )
+            # Continue to next iteration - don't block the loop
+        elif recovery_action == RECOVERY_ACTION_MARK_FAILED:
+            logger.error(
+                f"RECOVERY_FAILED {task_id_for_recovery}: "
+                "task marked as permanently failed due to max recovery attempts"
+            )
+            print_status(
+                f"Task {task_id_for_recovery} has permanently failed after max recovery attempts",
+                "error",
+            )
+            status_manager.update(state=BuildState.ERROR)
+            break
+        elif recovery_action != RECOVERY_ACTION_NONE:
+            logger.info(
+                f"RECOVERY_ACTION {task_id_for_recovery}: {recovery_action}"
+            )
+            print_status(f"Recovery action performed: {recovery_action}", "warning")
 
         # Check for human intervention (PAUSE file)
         pause_file = spec_dir / HUMAN_INTERVENTION_FILE
