@@ -76,3 +76,27 @@ def task_lock(task_id: str, base_dir: Path) -> Generator[bool, None, None]:
             lock.release()
         except Exception:
             pass
+
+
+def worktree_exists(base_dir: Path, task_id: str) -> bool:
+    """
+    Check if a worktree exists for a task.
+
+    Worktrees are stored in .worktrees/{task_id}/ relative to the base directory.
+    This follows the per-spec worktree architecture where each task gets its own
+    isolated worktree.
+
+    Args:
+        base_dir: Project root directory containing the .worktrees folder.
+        task_id: Unique identifier for the task (spec name).
+
+    Returns:
+        True if the worktree directory exists, False otherwise.
+
+    Example:
+        if worktree_exists(Path("/project"), "my-task"):
+            # Worktree exists at /project/.worktrees/my-task/
+            ...
+    """
+    worktree_path = base_dir / ".worktrees" / task_id
+    return worktree_path.exists()
