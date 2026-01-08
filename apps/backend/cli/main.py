@@ -440,6 +440,7 @@ def main() -> None:
         force_bypass_approval=args.force,
         base_branch=args.base_branch,
         resume_session_id=args.resume_session,  # Resume interrupted session if ID provided
+        agent_type=args.agent,  # AI agent backend (claude, gemini, opencode)
     )
 
 

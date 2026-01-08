@@ -62,6 +62,7 @@ def handle_build_command(
     force_bypass_approval: bool,
     base_branch: str | None = None,
     resume_session_id: str | None = None,
+    agent_type: str | None = None,
 ) -> None:
     """
     Handle the main build command.
@@ -79,6 +80,7 @@ def handle_build_command(
         force_bypass_approval: Force bypass approval check
         base_branch: Base branch for worktree creation (default: current branch)
         resume_session_id: Optional Claude session ID to resume an interrupted session
+        agent_type: AI agent backend to use (claude, gemini, opencode). If None, uses project config.
     """
     # Lazy imports to avoid loading heavy modules
     from agent import run_autonomous_agent, sync_plan_to_source
@@ -234,6 +236,7 @@ def handle_build_command(
                 verbose=verbose,
                 source_spec_dir=source_spec_dir,  # For syncing progress back to main project
                 resume_session_id=resume_session_id,  # Resume interrupted session if ID provided
+                agent_type=agent_type,  # AI agent backend (claude, gemini, opencode)
             )
         )
         debug_success("run.py", "Agent execution completed")
@@ -309,6 +312,7 @@ def handle_build_command(
             max_iterations=max_iterations,
             verbose=verbose,
             resume_session_id=resume_session_id,
+            agent_type=agent_type,
         )
     except Exception as e:
         print(f"\nFatal error: {e}")
@@ -328,6 +332,7 @@ def _handle_build_interrupt(
     max_iterations: int | None,
     verbose: bool,
     resume_session_id: str | None = None,
+    agent_type: str | None = None,
 ) -> None:
     """
     Handle keyboard interrupt during build.
@@ -341,6 +346,7 @@ def _handle_build_interrupt(
         max_iterations: Maximum iterations
         verbose: Verbose mode flag
         resume_session_id: Optional Claude session ID to resume an interrupted session
+        agent_type: AI agent backend to use (claude, gemini, opencode). If None, uses project config.
     """
     from agent import run_autonomous_agent
 
@@ -448,6 +454,7 @@ def _handle_build_interrupt(
                     max_iterations=max_iterations,
                     verbose=verbose,
                     resume_session_id=resume_session_id,  # Resume interrupted session
+                    agent_type=agent_type,  # AI agent backend (claude, gemini, opencode)
                 )
             )
             # Build completed or was interrupted again - exit
