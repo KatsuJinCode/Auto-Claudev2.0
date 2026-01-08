@@ -56,6 +56,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dependencies import validate_dependencies
+
 
 def get_next_spec_number(specs_dir: Path) -> int:
     """Find the next available spec number."""
@@ -473,6 +475,22 @@ def main():
     depends_on = [d.strip() for d in args.depends_on.split(",") if d.strip()]
 
     try:
+        # Validate dependencies before creating spec
+        if depends_on:
+            project_path = Path(args.project_dir).resolve()
+            # Generate the spec_id that will be created
+            specs_dir = project_path / ".auto-claude" / "specs"
+            specs_dir.mkdir(parents=True, exist_ok=True)
+            spec_num = get_next_spec_number(specs_dir)
+            new_spec_id = f"{spec_num:03d}-{args.name}"
+
+            is_valid, error_msg = validate_dependencies(
+                project_path, new_spec_id, depends_on
+            )
+            if not is_valid:
+                print(f"Error: {error_msg}", file=sys.stderr)
+                sys.exit(1)
+
         if args.from_json:
             # Multi-phase spec from JSON file
             if not args.description:
