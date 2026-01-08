@@ -3,6 +3,12 @@ import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from './ui/tooltip';
 import { cn, formatRelativeTime, sanitizeMarkdownForDisplay } from '../lib/utils';
 import { PhaseProgressIndicator } from './PhaseProgressIndicator';
 import {
@@ -371,10 +377,38 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
 
           {/* Action buttons */}
           {isBlocked ? (
-            <div className="flex items-center gap-1.5 text-xs text-orange-400">
-              <Ban className="h-3 w-3" />
-              <span>Dependencies unmet</span>
-            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 px-2.5 opacity-50 cursor-not-allowed"
+                      disabled
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Ban className="mr-1.5 h-3 w-3" />
+                      Start
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <div className="text-sm">
+                    <p className="font-medium text-orange-400 mb-1">Blocked by dependencies</p>
+                    {blockedByDependencies.length > 0 ? (
+                      <p className="text-muted-foreground">
+                        Waiting for: {blockedByDependencies.join(', ')}
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground">
+                        Dependencies must be completed first
+                      </p>
+                    )}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ) : isStuck ? (
             <Button
               variant="warning"
