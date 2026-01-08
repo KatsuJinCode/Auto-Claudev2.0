@@ -61,6 +61,165 @@ interface RegistryData {
 
 const REGISTRY_VERSION = 1;
 const REGISTRY_FILENAME = 'agents-registry.json';
+const HEARTBEAT_DIR = 'agent-heartbeat';
+
+/**
+ * Heartbeat file data format
+ *
+ * Heartbeat files are stored at .auto-claude/agent-heartbeat/{specId}.json
+ * and are written periodically by running agents to indicate they are still alive.
+ *
+ * This provides a secondary health check beyond PID monitoring:
+ * - PID check: verifies process exists
+ * - Heartbeat check: verifies process is responsive (not hung/crashed)
+ *
+ * File format: JSON with the following structure
+ */
+export interface HeartbeatData {
+  /** ISO timestamp when this heartbeat was written */
+  timestamp: string;
+  /** Current status of the agent */
+  status: AgentStatus;
+  /** Unique execution ID to correlate with registry entry */
+  executionId: string;
+  /** Spec ID the agent is working on */
+  specId: string;
+  /** Optional message about current activity */
+  currentActivity?: string;
+  /** Optional progress percentage (0-100) */
+  progressPercent?: number;
+  /** PID of the agent process (for additional validation) */
+  pid: number;
+}
+
+/**
+ * Result of reading a heartbeat file
+ */
+export interface HeartbeatReadResult {
+  /** Whether the heartbeat was successfully read */
+  success: boolean;
+  /** The heartbeat data if successful */
+  data?: HeartbeatData;
+  /** Error message if unsuccessful */
+  error?: string;
+  /** Whether the heartbeat file exists */
+  fileExists: boolean;
+}
+
+/**
+ * Get the directory path for heartbeat files
+ * @param workingDirectory - The project working directory
+ * @returns Path to the heartbeat directory
+ */
+export function getHeartbeatDir(workingDirectory: string): string {
+  return path.join(workingDirectory, '.auto-claude', HEARTBEAT_DIR);
+}
+
+/**
+ * Get the path to a specific agent's heartbeat file
+ * @param workingDirectory - The project working directory
+ * @param specId - The spec ID of the agent
+ * @returns Path to the heartbeat file
+ */
+export function getHeartbeatFilePath(workingDirectory: string, specId: string): string {
+  return path.join(getHeartbeatDir(workingDirectory), `${specId}.json`);
+}
+
+/**
+ * Read and parse a heartbeat file for an agent
+ *
+ * @param workingDirectory - The project working directory
+ * @param specId - The spec ID of the agent
+ * @returns HeartbeatReadResult with success status and data or error
+ */
+export function readHeartbeat(workingDirectory: string, specId: string): HeartbeatReadResult {
+  const heartbeatPath = getHeartbeatFilePath(workingDirectory, specId);
+
+  try {
+    if (!fs.existsSync(heartbeatPath)) {
+      return { success: false, fileExists: false, error: 'Heartbeat file does not exist' };
+    }
+
+    const content = fs.readFileSync(heartbeatPath, 'utf-8');
+    const data = JSON.parse(content) as HeartbeatData;
+
+    // Validate required fields
+    if (!data.timestamp || !data.status || !data.executionId || !data.specId || data.pid === undefined) {
+      return {
+        success: false,
+        fileExists: true,
+        error: 'Heartbeat file has invalid format: missing required fields'
+      };
+    }
+
+    return { success: true, data, fileExists: true };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      fileExists: fs.existsSync(heartbeatPath),
+      error: `Failed to read heartbeat: ${errorMessage}`
+    };
+  }
+}
+
+/**
+ * Write a heartbeat file for an agent
+ *
+ * This function is typically called by the agent process itself,
+ * but can also be used by the GUI to initialize the heartbeat file
+ * when starting a new agent.
+ *
+ * @param workingDirectory - The project working directory
+ * @param data - The heartbeat data to write
+ * @returns Object with success status and error if failed
+ */
+export function writeHeartbeat(
+  workingDirectory: string,
+  data: HeartbeatData
+): { success: boolean; error?: string } {
+  const heartbeatPath = getHeartbeatFilePath(workingDirectory, data.specId);
+
+  try {
+    // Ensure directory exists
+    const heartbeatDir = getHeartbeatDir(workingDirectory);
+    ensureDir(heartbeatDir);
+
+    // Write heartbeat file
+    const content = JSON.stringify(data, null, 2);
+    fs.writeFileSync(heartbeatPath, content, { encoding: 'utf-8', mode: 0o644 });
+
+    return { success: true };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: `Failed to write heartbeat: ${errorMessage}` };
+  }
+}
+
+/**
+ * Delete a heartbeat file for an agent
+ * Used during cleanup when an agent exits
+ *
+ * @param workingDirectory - The project working directory
+ * @param specId - The spec ID of the agent
+ * @returns Object with success status and error if failed
+ */
+export function deleteHeartbeat(
+  workingDirectory: string,
+  specId: string
+): { success: boolean; error?: string } {
+  const heartbeatPath = getHeartbeatFilePath(workingDirectory, specId);
+
+  try {
+    if (fs.existsSync(heartbeatPath)) {
+      fs.unlinkSync(heartbeatPath);
+    }
+    return { success: true };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: `Failed to delete heartbeat: ${errorMessage}` };
+  }
+}
 
 /**
  * Agent Registry class for persistent tracking of detached agent processes

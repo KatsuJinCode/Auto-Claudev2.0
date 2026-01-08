@@ -16,7 +16,16 @@ export { AgentState } from './agent-state';
 export { AgentEvents } from './agent-events';
 export { AgentProcessManager, killAgentProcess, forceKillAgentProcess, isProcessRunning } from './agent-process';
 export { AgentQueueManager } from './agent-queue';
-export { AgentRegistry, getAgentRegistry, resetAgentRegistry } from './agent-registry';
+export {
+  AgentRegistry,
+  getAgentRegistry,
+  resetAgentRegistry,
+  getHeartbeatDir,
+  getHeartbeatFilePath,
+  readHeartbeat,
+  writeHeartbeat,
+  deleteHeartbeat
+} from './agent-registry';
 export { FileOutputStreamer, createFileOutputStreamer } from './file-output-streamer';
 
 export type {
@@ -41,7 +50,9 @@ export type {
 
 export type {
   AgentRegistryEntry,
-  AgentStatus
+  AgentStatus,
+  HeartbeatData,
+  HeartbeatReadResult
 } from './agent-registry';
 
 export type {
