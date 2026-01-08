@@ -191,3 +191,214 @@ def is_zombie(state: TaskState, base_dir: Path) -> bool:
             f"Could not read activity marker for task {state.task_id}: {e}"
         )
         return True
+
+
+# Maximum recovery attempts before marking task as permanently failed
+MAX_RECOVERY_ATTEMPTS = 5
+
+# Recovery action return values
+RECOVERY_ACTION_NONE = "no_action"
+RECOVERY_ACTION_RESET_TO_READY = "reset_to_ready"
+RECOVERY_ACTION_RESET_TO_BACKLOG = "reset_to_backlog"
+RECOVERY_ACTION_UPDATE_TO_CODING = "update_to_coding"
+RECOVERY_ACTION_MARK_FAILED = "mark_failed"
+RECOVERY_ACTION_ZOMBIE_CLEANUP = "zombie_cleanup"
+RECOVERY_ACTION_LOCK_FAILED = "lock_failed"
+RECOVERY_ACTION_NO_STATE = "no_state"
+
+
+def _remove_worktree(base_dir: Path, task_id: str) -> bool:
+    """
+    Remove a worktree for a task using git worktree remove.
+
+    This is a best-effort cleanup operation. Failures are logged but don't
+    block the recovery process.
+
+    Args:
+        base_dir: Project root directory containing the .worktrees folder.
+        task_id: Unique identifier for the task.
+
+    Returns:
+        True if removal succeeded or worktree didn't exist, False on error.
+    """
+    import subprocess
+
+    worktree_path = base_dir / ".worktrees" / task_id
+
+    if not worktree_path.exists():
+        return True
+
+    try:
+        # Use --force to remove even if there are uncommitted changes
+        result = subprocess.run(
+            ["git", "worktree", "remove", "--force", str(worktree_path)],
+            cwd=str(base_dir),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode == 0:
+            logger.info(f"WORKTREE_REMOVED {task_id}: cleaned up stale worktree")
+            return True
+        else:
+            logger.warning(
+                f"WORKTREE_REMOVE_FAILED {task_id}: git worktree remove failed: "
+                f"{result.stderr.strip()}"
+            )
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"WORKTREE_REMOVE_TIMEOUT {task_id}: removal timed out")
+        return False
+    except Exception as e:
+        logger.warning(f"WORKTREE_REMOVE_ERROR {task_id}: {e}")
+        return False
+
+
+def recover_if_stuck(
+    task_id: str,
+    base_dir: Path,
+    state_dir: Path | None = None,
+) -> str:
+    """
+    Detect and fix state/filesystem mismatches for a task.
+
+    This function handles 4 recovery cases:
+    1. coding without worktree: status="coding" but no worktree → reset to "ready"
+    2. zombie task: task stuck 2+ hours with no activity → reset to "ready", cleanup worktree
+    3. worktree without coding status: worktree exists but status="ready" → update to "coding"
+    4. planning stalled: planning status >2 hours idle → reset to "backlog"
+
+    Recovery is bounded by MAX_RECOVERY_ATTEMPTS (5). Tasks exceeding this limit
+    are marked as permanently "failed".
+
+    Args:
+        task_id: Unique identifier for the task.
+        base_dir: Project root directory containing the .worktrees folder.
+        state_dir: Directory where task state files are stored. If None, uses
+            base_dir / ".auto-claude" / "specs".
+
+    Returns:
+        Action string indicating what was done:
+        - "no_action": Task state is consistent, no recovery needed
+        - "reset_to_ready": Task was reset to ready state
+        - "reset_to_backlog": Planning task was reset to backlog
+        - "update_to_coding": Task status updated to match existing worktree
+        - "mark_failed": Task marked as permanently failed (max retries exceeded)
+        - "zombie_cleanup": Zombie task cleaned up and reset
+        - "lock_failed": Could not acquire lock, retry next cycle
+        - "no_state": No state file found for task
+
+    Example:
+        action = recover_if_stuck("my-task", Path("/project"))
+        if action == "lock_failed":
+            # Retry next polling cycle
+            ...
+        elif action == "mark_failed":
+            # Task permanently failed, notify user
+            ...
+    """
+    # Import here to avoid circular dependency
+    from services.task_state import load_state, save_state, utc_now
+
+    # Default state directory follows Auto-Claude convention
+    if state_dir is None:
+        state_dir = base_dir / ".auto-claude" / "specs"
+
+    # Acquire lock before modifying state
+    with task_lock(task_id, state_dir) as acquired:
+        if not acquired:
+            return RECOVERY_ACTION_LOCK_FAILED
+
+        # Load current state
+        state = load_state(task_id, state_dir)
+        if state is None:
+            logger.warning(f"NO_STATE {task_id}: no state file found, cannot recover")
+            return RECOVERY_ACTION_NO_STATE
+
+        old_status = state.status
+
+        # Check if max recovery attempts exceeded
+        if state.recovery_attempts >= MAX_RECOVERY_ATTEMPTS:
+            if state.status != "failed":
+                state.status = "failed"
+                state.failure_reason = (
+                    f"Maximum recovery attempts ({MAX_RECOVERY_ATTEMPTS}) exceeded"
+                )
+                state.last_activity = utc_now()
+                save_state(state, state_dir)
+                logger.error(
+                    f"RECOVERY_MAX_RETRIES {task_id}: marking as failed after "
+                    f"{MAX_RECOVERY_ATTEMPTS} recovery attempts"
+                )
+                return RECOVERY_ACTION_MARK_FAILED
+            # Already failed, no action needed
+            return RECOVERY_ACTION_NONE
+
+        # Don't recover tasks that are already done or failed
+        if state.status in ("done", "failed"):
+            return RECOVERY_ACTION_NONE
+
+        # Check for worktree existence
+        has_worktree = worktree_exists(base_dir, task_id)
+
+        # Case 1: coding without worktree
+        if state.status == "coding" and not has_worktree:
+            state.status = "ready"
+            state.recovery_attempts += 1
+            state.last_activity = utc_now()
+            save_state(state, state_dir)
+            logger.warning(
+                f"RECOVERY {task_id}: status was 'coding' but no worktree exists. "
+                f"Reset to 'ready' (attempt {state.recovery_attempts}/{MAX_RECOVERY_ATTEMPTS})"
+            )
+            return RECOVERY_ACTION_RESET_TO_READY
+
+        # Case 2: zombie task (coding with worktree but no activity)
+        if state.status == "coding" and has_worktree:
+            if is_zombie(state, base_dir):
+                # Clean up the stale worktree
+                _remove_worktree(base_dir, task_id)
+
+                state.status = "ready"
+                state.recovery_attempts += 1
+                state.last_activity = utc_now()
+                save_state(state, state_dir)
+                logger.warning(
+                    f"RECOVERY_ZOMBIE {task_id}: zombie task detected (no activity for "
+                    f"{ZOMBIE_THRESHOLD_HOURS}+ hours). Reset to 'ready', worktree removed "
+                    f"(attempt {state.recovery_attempts}/{MAX_RECOVERY_ATTEMPTS})"
+                )
+                return RECOVERY_ACTION_ZOMBIE_CLEANUP
+
+        # Case 3: worktree exists but status is ready (orphaned worktree)
+        if state.status == "ready" and has_worktree:
+            state.status = "coding"
+            state.last_activity = utc_now()
+            # Don't increment recovery_attempts for this case - it's a state sync, not a failure
+            save_state(state, state_dir)
+            logger.info(
+                f"RECOVERY_SYNC {task_id}: worktree exists but status was 'ready'. "
+                f"Updated to 'coding' to match filesystem state"
+            )
+            return RECOVERY_ACTION_UPDATE_TO_CODING
+
+        # Case 4: planning stalled (planning status with no activity for 2+ hours)
+        if state.status == "planning":
+            # Reuse is_zombie logic to check for stalled planning
+            # Create a temporary state object for zombie check
+            if is_zombie(state, base_dir):
+                state.status = "backlog"
+                state.recovery_attempts += 1
+                state.last_activity = utc_now()
+                save_state(state, state_dir)
+                logger.warning(
+                    f"RECOVERY_PLANNING_STALLED {task_id}: planning phase stalled for "
+                    f"{ZOMBIE_THRESHOLD_HOURS}+ hours. Reset to 'backlog' "
+                    f"(attempt {state.recovery_attempts}/{MAX_RECOVERY_ATTEMPTS})"
+                )
+                return RECOVERY_ACTION_RESET_TO_BACKLOG
+
+        # No recovery needed
+        return RECOVERY_ACTION_NONE
