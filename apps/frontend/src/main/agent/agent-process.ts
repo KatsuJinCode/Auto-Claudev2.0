@@ -66,6 +66,23 @@ export interface SpawnAgentOptions {
    * Defaults to true
    */
   registerInRegistry?: boolean;
+  /**
+   * Whether to use shell mode on Windows for CTRL event support.
+   *
+   * On Windows, using shell:true spawns the process through cmd.exe, which ensures
+   * that CTRL_BREAK_EVENT (sent via SIGBREAK signal) can reach the process for
+   * graceful shutdown. This is important for killAgentProcess() to work correctly.
+   *
+   * Trade-offs:
+   * - Pro: Ensures CTRL_BREAK_EVENT works for graceful shutdown
+   * - Con: Adds cmd.exe layer, may affect argument parsing
+   * - Con: Creates additional process (cmd.exe -> actual process)
+   *
+   * On Unix, this option is ignored (shell is not needed for signal delivery).
+   *
+   * Defaults to true on Windows for CTRL event support, false on Unix.
+   */
+  windowsShell?: boolean;
 }
 
 /**
@@ -174,6 +191,13 @@ export function isProcessRunning(pid: number): boolean {
  *
  * Note: For detached processes spawned with detached: true, this function
  * operates on the PID directly rather than through the ChildProcess object.
+ *
+ * Windows CTRL_BREAK_EVENT requirements:
+ * - The target process must be able to receive console events
+ * - When using spawnAgentProcess(), shell:true (default on Windows) ensures
+ *   the process is spawned through cmd.exe with proper console allocation
+ * - If the process was spawned with windowsShell: false, CTRL_BREAK_EVENT
+ *   may not reach it (use forceKillAgentProcess() as fallback)
  *
  * @param pid - The process ID of the agent to kill
  * @returns Result indicating success or failure with details
@@ -466,13 +490,40 @@ export async function forceKillAgentProcess(
  * - Continues running after the parent process exits (detached: true)
  * - Doesn't show a console window on Windows (windowsHide: true)
  * - Writes output to a file for later reading (when outputFile is provided)
+ * - Uses platform-specific settings for process control signal support
  *
- * Important: After spawning, call child.unref() to allow the parent
- * to exit without waiting for the child process.
+ * Platform-specific behavior:
+ * - **Windows**: Uses shell:true by default (configurable via windowsShell option)
+ *   to ensure CTRL_BREAK_EVENT can reach the process for graceful shutdown.
+ *   The windowsHide:true option prevents a visible console window.
+ * - **Unix**: Uses shell:false (signals like SIGTERM work directly without shell).
+ *   No special handling needed for graceful shutdown.
+ *
+ * Important: After spawning, child.unref() is called automatically to allow
+ * the parent to exit without waiting for the child process.
  *
  * @param options - Configuration for the spawned process
  * @returns The spawned process and its PID
  * @throws Error if the process fails to spawn or has no PID
+ *
+ * @example
+ * // Spawn with default Windows CTRL event support
+ * const result = spawnAgentProcess({
+ *   specId: 'my-task',
+ *   command: 'python',
+ *   args: ['-m', 'my_module'],
+ *   cwd: '/path/to/project'
+ * });
+ *
+ * @example
+ * // Disable Windows shell mode if CTRL events not needed
+ * const result = spawnAgentProcess({
+ *   specId: 'my-task',
+ *   command: 'python',
+ *   args: ['-m', 'my_module'],
+ *   cwd: '/path/to/project',
+ *   windowsShell: false
+ * });
  */
 export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult {
   const { specId, command, args, cwd, env = {} } = options;
@@ -597,6 +648,12 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
     stdio = ['ignore', 'ignore', 'ignore'];
   }
 
+  // Determine whether to use shell mode on Windows for CTRL event support
+  // On Windows, shell:true ensures CTRL_BREAK_EVENT can reach the process
+  // for graceful shutdown via killAgentProcess(). Defaults to true on Windows.
+  // On Unix, shell is always false (signals work without shell).
+  const useShell = isWindows && (options.windowsShell !== false);
+
   // Spawn options for detached process
   const spawnOptions: SpawnOptions = {
     cwd,
@@ -606,7 +663,11 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
     // Hide console window on Windows
     windowsHide: isWindows,
     // Configure stdio for file output or ignore
-    stdio
+    stdio,
+    // Use shell on Windows for CTRL_BREAK_EVENT support (graceful shutdown)
+    // On Windows: shell:true spawns through cmd.exe, enabling CTRL events
+    // On Unix: shell:false (signals like SIGTERM work directly)
+    shell: useShell
   };
 
   // Spawn the detached process
