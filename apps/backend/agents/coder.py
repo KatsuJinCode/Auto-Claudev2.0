@@ -274,18 +274,17 @@ async def run_autonomous_agent(
         # On first iteration, try to resume previous session if ID provided
         session_to_resume = resume_session_id if iteration == 1 else None
 
-        # Only create Claude SDK client when using Claude agent
-        # Non-Claude agents (Gemini, OpenCode) use CLI subprocess and don't need a client
-        if resolved_agent_type == "claude":
-            client = create_client(
-                project_dir,
-                spec_dir,
-                phase_model,
-                max_thinking_tokens=phase_thinking_budget,
-                resume_session_id=session_to_resume,
-            )
-        else:
-            client = None
+        # Create client using the unified create_client() function
+        # Returns ClaudeSDKClient for Claude backend, None for Gemini/OpenCode
+        # (non-Claude agents use CLI subprocess via run_agent() in agent_runner)
+        client = create_client(
+            project_dir,
+            spec_dir,
+            phase_model,
+            max_thinking_tokens=phase_thinking_budget,
+            resume_session_id=session_to_resume,
+            agent_backend=resolved_agent_type,
+        )
 
         # Generate appropriate prompt
         if first_run:

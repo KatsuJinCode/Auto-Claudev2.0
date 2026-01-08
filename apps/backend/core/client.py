@@ -2,12 +2,18 @@
 Claude SDK Client Configuration
 ===============================
 
-Functions for creating and configuring the Claude Agent SDK client.
+Functions for creating and configuring AI agent clients.
+
+Supports multiple AI agent backends:
+- Claude (via ClaudeSDKClient with rich streaming and tool callbacks)
+- Gemini (via CLI subprocess - no client needed, returns None)
+- OpenCode (via CLI subprocess - no client needed, returns None)
 """
 
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
 from auto_claude_tools import (
     create_auto_claude_mcp_server,
@@ -18,6 +24,7 @@ from auto_claude_tools import (
 )
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
+from core.agent_runner import AgentTypeLiteral
 from core.auth import get_sdk_env_vars, require_auth_token
 from linear_updater import is_linear_enabled
 from prompts_pkg.project_context import detect_project_capabilities, load_project_index
@@ -136,14 +143,19 @@ def create_client(
     agent_type: str = "coder",
     max_thinking_tokens: int | None = None,
     resume_session_id: str | None = None,
-) -> ClaudeSDKClient:
+    agent_backend: AgentTypeLiteral = "claude",
+) -> Optional[ClaudeSDKClient]:
     """
-    Create a Claude Agent SDK client with multi-layered security.
+    Create an AI agent client based on the specified backend.
+
+    For Claude agents, returns a fully configured ClaudeSDKClient with multi-layered security.
+    For non-Claude agents (Gemini, OpenCode), returns None since they use CLI subprocess
+    and don't require an SDK client.
 
     Args:
         project_dir: Root directory for the project (working directory)
         spec_dir: Directory containing the spec (for settings file)
-        model: Claude model to use
+        model: Model to use (agent-specific)
         agent_type: Type of agent - 'planner', 'coder', 'qa_reviewer', or 'qa_fixer'
                    This determines which custom auto-claude tools are available.
         max_thinking_tokens: Token budget for extended thinking (None = disabled)
@@ -154,17 +166,34 @@ def create_client(
         resume_session_id: Optional session ID to resume a previous interrupted session.
                           When provided, the SDK will continue the conversation from where
                           it left off instead of starting fresh.
+        agent_backend: AI agent backend to use ("claude", "gemini", or "opencode").
+                      Non-Claude backends return None as they use CLI subprocess.
 
     Returns:
-        Configured ClaudeSDKClient
+        Configured ClaudeSDKClient for Claude backend, None for other backends.
 
-    Security layers (defense in depth):
+    Security layers (for Claude backend - defense in depth):
     1. Sandbox - OS-level bash command isolation prevents filesystem escape
     2. Permissions - File operations restricted to project_dir only
     3. Security hooks - Bash commands validated against an allowlist
        (see security.py for ALLOWED_COMMANDS)
     4. Tool filtering - Each agent type only sees relevant tools (prevents misuse)
+
+    Example:
+        # Claude agent - returns ClaudeSDKClient
+        client = create_client(project_dir, spec_dir, model)
+        async with client:
+            await client.query(prompt)
+
+        # Gemini/OpenCode agents - returns None
+        client = create_client(project_dir, spec_dir, model, agent_backend="gemini")
+        assert client is None  # Use run_agent() from agent_runner instead
     """
+    # For non-Claude agents, return None as they use CLI subprocess
+    # and don't require an SDK client. Callers should use run_agent() from
+    # core.agent_runner for Gemini and OpenCode backends.
+    if agent_backend != "claude":
+        return None
     oauth_token = require_auth_token()
     # Ensure SDK can access it via its expected env var
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
