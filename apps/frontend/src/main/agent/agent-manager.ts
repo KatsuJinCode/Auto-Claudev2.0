@@ -745,7 +745,8 @@ export class AgentManager extends EventEmitter {
     const validation = registry.isAgentAlive(entry.specId);
 
     if (!validation.alive) {
-      // Agent is already dead - clean up monitoring
+      // Agent is already dead - clean up monitoring and registry
+      this.cleanupAgentOnExit(entry.specId);
       this.disconnectFromAgent(taskId);
       return {
         success: true,
@@ -760,7 +761,7 @@ export class AgentManager extends EventEmitter {
 
     if (!gracefulResult.success) {
       // Failed to send signal - this is an error condition
-      // Still disconnect from monitoring
+      // Still disconnect from monitoring (but don't clean up registry as process state is unknown)
       this.disconnectFromAgent(taskId);
       return {
         success: false,
@@ -773,6 +774,8 @@ export class AgentManager extends EventEmitter {
 
     // If the process was already terminated (ESRCH), we're done
     if (gracefulResult.terminated) {
+      // Clean up registry entry and lockfile since process is confirmed dead
+      this.cleanupAgentOnExit(entry.specId);
       this.disconnectFromAgent(taskId);
       return {
         success: true,
@@ -803,6 +806,10 @@ export class AgentManager extends EventEmitter {
           gracefulFirst: false // Skip graceful since we already tried
         });
 
+        // Clean up registry entry and lockfile if force kill succeeded
+        if (forceResult.success) {
+          this.cleanupAgentOnExit(entry.specId);
+        }
         this.disconnectFromAgent(taskId);
 
         return {
@@ -814,7 +821,8 @@ export class AgentManager extends EventEmitter {
         };
       }
 
-      // Process exited gracefully
+      // Process exited gracefully - clean up registry entry and lockfile
+      this.cleanupAgentOnExit(entry.specId);
       this.disconnectFromAgent(taskId);
       return {
         success: true,
@@ -871,6 +879,8 @@ export class AgentManager extends EventEmitter {
     const validation = registry.isAgentAlive(specId);
 
     if (!validation.alive) {
+      // Agent is already dead - clean up registry entry and lockfile
+      this.cleanupAgentOnExit(specId);
       return {
         success: true,
         taskId: specId,
@@ -885,6 +895,8 @@ export class AgentManager extends EventEmitter {
     const gracefulResult = killAgentProcess(entry.pid);
 
     if (gracefulResult.terminated) {
+      // Process was already terminated - clean up registry entry and lockfile
+      this.cleanupAgentOnExit(specId);
       return {
         success: true,
         taskId: specId,
@@ -899,6 +911,11 @@ export class AgentManager extends EventEmitter {
         gracefulTimeout
       });
 
+      // Clean up registry entry and lockfile if force kill succeeded
+      if (forceResult.success) {
+        this.cleanupAgentOnExit(specId);
+      }
+
       return {
         success: forceResult.success,
         taskId: specId,
@@ -908,6 +925,8 @@ export class AgentManager extends EventEmitter {
       };
     }
 
+    // Graceful signal sent without force kill - don't clean up yet
+    // The registry entry will be cleaned up on next discovery if process exits
     return {
       success: gracefulResult.success,
       taskId: specId,
@@ -915,6 +934,45 @@ export class AgentManager extends EventEmitter {
       error: gracefulResult.error,
       elapsedMs: Date.now() - startTime
     };
+  }
+
+  /**
+   * Clean up an agent when its process exits
+   *
+   * This method handles the final cleanup when an agent process terminates:
+   * 1. Unregisters the agent from the registry (removes the entry)
+   * 2. Deletes the associated lockfile
+   *
+   * This is called from:
+   * - startPidMonitoring() when it detects the process has exited
+   * - stopAgent() after successfully stopping an agent
+   * - stopAgentBySpecId() after successfully stopping an agent by specId
+   *
+   * Note: This uses cleanupStaleEntry() from the registry which handles
+   * both removal and lockfile deletion atomically.
+   *
+   * @param specId - The spec ID of the agent to clean up
+   * @returns Object with cleanup result details
+   */
+  private cleanupAgentOnExit(specId: string): { success: boolean; lockfileDeleted: boolean; error?: string } {
+    const registry = getAgentRegistry();
+
+    // Use the registry's cleanupStaleEntry which handles both
+    // registry removal and lockfile deletion
+    const result = registry.cleanupStaleEntry(specId);
+
+    if (result.success) {
+      console.log(
+        `[AgentManager] Cleaned up agent '${specId}': ` +
+        `registry entry removed, lockfile ${result.lockfileDeleted ? 'deleted' : 'not found/already deleted'}`
+      );
+    } else {
+      console.warn(
+        `[AgentManager] Failed to clean up agent '${specId}': ${result.error}`
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -938,6 +996,12 @@ export class AgentManager extends EventEmitter {
 
   /**
    * Start monitoring the agent's PID to detect when it exits
+   *
+   * When the process exits, this method:
+   * 1. Triggers a final read to capture remaining output
+   * 2. Emits exit events to update the UI
+   * 3. Cleans up by unregistering from registry and deleting lockfile
+   * 4. Disconnects from the agent (stops file tailing)
    */
   private startPidMonitoring(agent: ReconnectedAgent): void {
     const { entry, taskId, streamer } = agent;
@@ -955,14 +1019,7 @@ export class AgentManager extends EventEmitter {
         // Determine exit status based on validation reason
         const isCompleted = validation.reason?.includes('not running') ?? false;
 
-        // Update registry status
-        registry.updatePartial(entry.specId, {
-          status: isCompleted ? 'completed' : 'failed',
-          lastHeartbeat: new Date().toISOString()
-        });
-        registry.save();
-
-        // Emit exit event
+        // Emit exit event to update UI
         this.emit('execution-progress', taskId, {
           phase: isCompleted ? 'complete' : 'failed',
           phaseProgress: 100,
@@ -971,6 +1028,10 @@ export class AgentManager extends EventEmitter {
         });
 
         this.emit('exit', taskId, isCompleted ? 0 : 1, 'task-execution');
+
+        // Clean up: unregister from registry and delete lockfile
+        // This ensures the registry accurately reflects running vs stopped agents
+        this.cleanupAgentOnExit(entry.specId);
 
         // Clean up monitoring (this also stops the streamer)
         this.disconnectFromAgent(taskId);
