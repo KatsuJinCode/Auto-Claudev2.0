@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
-import { existsSync, statSync, watch, watchFile, unwatchFile, FSWatcher } from 'fs';
+import { existsSync, statSync, watch, watchFile, unwatchFile, FSWatcher, constants } from 'fs';
+import * as os from 'os';
 
 /**
  * Options for configuring the FileOutputStreamer
@@ -114,6 +115,9 @@ export class FileOutputStreamer extends EventEmitter {
     encoding: 'utf-8'
   };
 
+  /** Flags used to open the file */
+  private openFlags: number = 0;
+
   constructor() {
     super();
     this.options = { ...FileOutputStreamer.DEFAULT_OPTIONS };
@@ -156,12 +160,31 @@ export class FileOutputStreamer extends EventEmitter {
       throw new Error(`Failed to stat file ${filePath}: ${message}`);
     }
 
-    // Open file with read-only flag for shared access
+    // Open file with explicit read-only and non-blocking flags for shared access
     // On Windows, Node.js opens files with FILE_SHARE_READ | FILE_SHARE_WRITE by default,
     // which allows other processes to continue writing while we read.
-    // Using 'r' flag (O_RDONLY) ensures we only read and don't interfere with writes.
+    //
+    // We use explicit fs.constants flags instead of string mode for better control:
+    // - O_RDONLY: Read-only access, ensures we don't interfere with writes
+    // - O_NONBLOCK: Non-blocking mode (Unix only), prevents blocking on file operations
+    //
+    // Note: O_NONBLOCK doesn't exist on Windows, so we detect the platform and only
+    // include it on Unix-like systems where it provides true non-blocking behavior.
     try {
-      this.fd = fs.openSync(filePath, 'r');
+      const isWindows = os.platform() === 'win32';
+
+      // Build file open flags
+      // O_RDONLY is required for read-only access
+      this.openFlags = constants.O_RDONLY;
+
+      // Add O_NONBLOCK on Unix platforms for non-blocking reads
+      // This ensures reads don't block if the file is being actively written
+      // On Windows, this flag is undefined/not supported, so we skip it
+      if (!isWindows && constants.O_NONBLOCK !== undefined) {
+        this.openFlags = this.openFlags | constants.O_NONBLOCK;
+      }
+
+      this.fd = fs.openSync(filePath, this.openFlags);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to open file ${filePath}: ${message}`);
@@ -233,6 +256,7 @@ export class FileOutputStreamer extends EventEmitter {
 
     this.isActive = false;
     this.filePath = null;
+    this.openFlags = 0;
 
     // Emit stop event
     if (filePath) {
@@ -259,6 +283,48 @@ export class FileOutputStreamer extends EventEmitter {
    */
   getFilePath(): string | null {
     return this.filePath;
+  }
+
+  /**
+   * Get the file open flags used
+   *
+   * Returns the numeric flags used with fs.openSync, which include:
+   * - O_RDONLY: Always set for read-only access
+   * - O_NONBLOCK: Set on Unix platforms for non-blocking reads
+   */
+  getOpenFlags(): number {
+    return this.openFlags;
+  }
+
+  /**
+   * Check if non-blocking mode is enabled
+   *
+   * Returns true if O_NONBLOCK flag was included when opening the file.
+   * This will be true on Unix platforms and false on Windows.
+   */
+  isNonBlockingEnabled(): boolean {
+    // Check if O_NONBLOCK is defined and was included in openFlags
+    return constants.O_NONBLOCK !== undefined &&
+      (this.openFlags & constants.O_NONBLOCK) === constants.O_NONBLOCK;
+  }
+
+  /**
+   * Get the recommended file open flags for the current platform
+   *
+   * Static method to get the flags that would be used without starting a stream.
+   * Useful for external code that needs to open files with compatible flags.
+   *
+   * @returns Numeric flags suitable for fs.openSync
+   */
+  static getRecommendedOpenFlags(): number {
+    const isWindows = os.platform() === 'win32';
+    let flags = constants.O_RDONLY;
+
+    if (!isWindows && constants.O_NONBLOCK !== undefined) {
+      flags = flags | constants.O_NONBLOCK;
+    }
+
+    return flags;
   }
 
   /**
@@ -364,14 +430,23 @@ export class FileOutputStreamer extends EventEmitter {
       }
     } catch (error) {
       // Handle file read errors gracefully
-      // EBUSY/EAGAIN are temporary - don't stop monitoring
+      // Some errors are temporary and should not stop monitoring:
+      // - EBUSY: File is temporarily busy (Windows)
+      // - EAGAIN: Resource temporarily unavailable (non-blocking read, Unix)
+      // - EWOULDBLOCK: Same as EAGAIN on most systems (non-blocking read)
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      if (!errorMessage.includes('EBUSY') && !errorMessage.includes('EAGAIN')) {
+      const isTemporaryError =
+        errorMessage.includes('EBUSY') ||
+        errorMessage.includes('EAGAIN') ||
+        errorMessage.includes('EWOULDBLOCK');
+
+      if (!isTemporaryError) {
         const err = error instanceof Error ? error : new Error(errorMessage);
         this.emit('error', err);
       }
-      // For EBUSY/EAGAIN, silently retry on next poll
+      // For temporary errors (EBUSY/EAGAIN/EWOULDBLOCK), silently retry on next poll
+      // This is expected behavior when using O_NONBLOCK flag
     }
   }
 
