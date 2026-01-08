@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from graphiti_config import get_graphiti_status
 from linear_integration import LinearManager
 from linear_updater import is_linear_enabled
-from spec.pipeline import get_specs_dir
+from spec.pipeline import get_spec_dir_worktree_aware, get_specs_dir
 from ui import (
     Icons,
     bold,
@@ -58,29 +58,53 @@ def find_spec(
     project_dir: Path, spec_identifier: str, dev_mode: bool = False
 ) -> Path | None:
     """
-    Find a spec by number or full name.
+    Find a spec by number or full name, preferring worktree if it exists.
+
+    When a worktree exists for a spec, it is the SINGLE source of truth.
+    The main repo's copy is stale once work begins in the worktree.
 
     Args:
         project_dir: Project root directory
         spec_identifier: Either "001" or "001-feature-name"
-        dev_mode: If True, use dev/auto-claude/specs/
+        dev_mode: If True, use dev/auto-claude/specs/ (deprecated)
 
     Returns:
         Path to spec folder, or None if not found
     """
-    specs_dir = get_specs_dir(project_dir, dev_mode)
+    # Try worktree-aware exact match first
+    worktree_result = get_spec_dir_worktree_aware(project_dir, spec_identifier)
+    if worktree_result and (worktree_result / "spec.md").exists():
+        return worktree_result
 
+    # Try matching by number prefix - check worktrees first
+    worktrees_dir = project_dir / ".worktrees"
+    if worktrees_dir.exists():
+        for worktree in worktrees_dir.iterdir():
+            if worktree.is_dir() and worktree.name.startswith(spec_identifier + "-"):
+                worktree_spec = worktree / ".auto-claude" / "specs" / worktree.name
+                if worktree_spec.exists() and (worktree_spec / "spec.md").exists():
+                    return worktree_spec
+
+    # Fall back to main specs dir only if no worktree match
+    specs_dir = get_specs_dir(project_dir, dev_mode)
     if not specs_dir.exists():
         return None
 
-    # Try exact match first
+    # Try exact match in main
     exact_path = specs_dir / spec_identifier
     if exact_path.exists() and (exact_path / "spec.md").exists():
-        return exact_path
+        # Double-check no worktree exists for this spec
+        worktree_check = project_dir / ".worktrees" / spec_identifier
+        if not worktree_check.exists():
+            return exact_path
 
-    # Try matching by number prefix
+    # Try matching by number prefix in main
     for spec_folder in specs_dir.iterdir():
         if spec_folder.is_dir() and spec_folder.name.startswith(spec_identifier + "-"):
+            # Double-check no worktree exists for this spec
+            worktree_check = project_dir / ".worktrees" / spec_folder.name
+            if worktree_check.exists():
+                continue  # Skip - worktree is source of truth
             if (spec_folder / "spec.md").exists():
                 return spec_folder
 

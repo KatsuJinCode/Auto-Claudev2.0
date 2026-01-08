@@ -30,6 +30,35 @@ function checkSubtasksCompletion(plan: Record<string, unknown> | null): {
 }
 
 /**
+ * Get the spec directory, preferring worktree if it exists.
+ *
+ * When a worktree exists for a spec, it is the SINGLE source of truth.
+ * The main repo's copy is stale once work begins in the worktree.
+ */
+function getWorktreeAwareSpecDir(
+  projectPath: string,
+  autoBuildDir: string,
+  specId: string
+): string {
+  // Check worktree first - if it exists, it's the only source of truth
+  const worktreeSpecDir = path.join(
+    projectPath,
+    '.worktrees',
+    specId,
+    autoBuildDir,
+    'specs',
+    specId
+  );
+
+  if (existsSync(worktreeSpecDir)) {
+    return worktreeSpecDir;
+  }
+
+  // Fall back to main repo only if no worktree
+  return path.join(projectPath, autoBuildDir, 'specs', specId);
+}
+
+/**
  * Register task execution handlers (start, stop, review, status management, recovery)
  */
 export function registerTaskExecutionHandlers(
@@ -582,14 +611,9 @@ export function registerTaskExecutionHandlers(
         return { success: false, error: 'Task not found' };
       }
 
-      // Get the spec directory
+      // Get the spec directory - prefer worktree if it exists (worktree is source of truth)
       const autoBuildDir = project.autoBuildPath || '.auto-claude';
-      const specDir = path.join(
-        project.path,
-        autoBuildDir,
-        'specs',
-        task.specId
-      );
+      const specDir = getWorktreeAwareSpecDir(project.path, autoBuildDir, task.specId);
 
       // Update implementation_plan.json
       const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
@@ -745,9 +769,8 @@ export function registerTaskExecutionHandlers(
             }
 
             // Start the task execution
-            // Start file watcher for this task
-            const specsBaseDir = getSpecsDir(project.autoBuildPath);
-            const specDirForWatcher = path.join(project.path, specsBaseDir, task.specId);
+            // Start file watcher for this task - use worktree if it exists
+            const specDirForWatcher = getWorktreeAwareSpecDir(project.path, autoBuildDir, task.specId);
             fileWatcher.watch(taskId, specDirForWatcher);
 
             // Check if spec.md exists to determine whether to run spec creation or task execution

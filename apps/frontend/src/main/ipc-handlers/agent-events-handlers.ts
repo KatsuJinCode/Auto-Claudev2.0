@@ -16,6 +16,34 @@ import { fileWatcher } from '../file-watcher';
 import { projectStore } from '../project-store';
 import { notificationService } from '../notification-service';
 
+/**
+ * Get the spec directory, preferring worktree if it exists.
+ *
+ * When a worktree exists for a spec, it is the SINGLE source of truth.
+ * The main repo's copy is stale once work begins in the worktree.
+ */
+function getWorktreeAwareSpecDir(
+  projectPath: string,
+  autoBuildDir: string,
+  specId: string
+): string {
+  // Check worktree first - if it exists, it's the only source of truth
+  const worktreeSpecDir = path.join(
+    projectPath,
+    '.worktrees',
+    specId,
+    autoBuildDir,
+    'specs',
+    specId
+  );
+
+  if (existsSync(worktreeSpecDir)) {
+    return worktreeSpecDir;
+  }
+
+  // Fall back to main repo only if no worktree
+  return path.join(projectPath, autoBuildDir, 'specs', specId);
+}
 
 /**
  * Register all agent-events-related IPC handlers
@@ -105,8 +133,8 @@ export function registerAgenteventsHandlers(
         // Persist status to disk so it survives hot reload
         // This is a backup in case the Python backend didn't sync properly
         if (task && project) {
-          const specsBaseDir = getSpecsDir(project.autoBuildPath);
-          const specDir = path.join(project.path, specsBaseDir, task.specId);
+          const autoBuildDir = project.autoBuildPath || '.auto-claude';
+          const specDir = getWorktreeAwareSpecDir(project.path, autoBuildDir, task.specId);
           const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
 
           if (existsSync(planPath)) {

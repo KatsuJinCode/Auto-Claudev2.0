@@ -14,6 +14,7 @@ if str(_PARENT_DIR) not in sys.path:
     sys.path.insert(0, str(_PARENT_DIR))
 
 from progress import count_subtasks
+from spec.pipeline import list_all_specs_worktree_aware
 from workspace import get_existing_build_worktree
 
 from .utils import get_specs_dir
@@ -21,27 +22,27 @@ from .utils import get_specs_dir
 
 def list_specs(project_dir: Path, dev_mode: bool = False) -> list[dict]:
     """
-    List all specs in the project.
+    List all specs in the project, preferring worktree copies when they exist.
+
+    When a worktree exists for a spec, it is the SINGLE source of truth.
+    The main repo's copy is stale once work begins in the worktree.
 
     Args:
         project_dir: Project root directory
-        dev_mode: If True, use dev/auto-claude/specs/
+        dev_mode: If True, use dev/auto-claude/specs/ (deprecated)
 
     Returns:
         List of spec info dicts with keys: number, name, path, status, progress
     """
-    specs_dir = get_specs_dir(project_dir, dev_mode)
+    # Use worktree-aware listing - worktree takes precedence over main
+    all_specs = list_all_specs_worktree_aware(project_dir)
     specs = []
 
-    if not specs_dir.exists():
+    if not all_specs:
         return specs
 
-    for spec_folder in sorted(specs_dir.iterdir()):
-        if not spec_folder.is_dir():
-            continue
-
+    for folder_name, spec_folder in all_specs:
         # Parse folder name (e.g., "001-initial-app")
-        folder_name = spec_folder.name
         parts = folder_name.split("-", 1)
         if len(parts) != 2 or not parts[0].isdigit():
             continue

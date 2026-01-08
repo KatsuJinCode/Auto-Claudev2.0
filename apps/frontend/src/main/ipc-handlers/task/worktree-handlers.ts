@@ -12,6 +12,35 @@ import { findTaskAndProject } from './shared';
 import { findPythonCommand, parsePythonCommand } from '../../python-detector';
 
 /**
+ * Get the spec directory, preferring worktree if it exists.
+ *
+ * When a worktree exists for a spec, it is the SINGLE source of truth.
+ * The main repo's copy is stale once work begins in the worktree.
+ */
+function getWorktreeAwareSpecDir(
+  projectPath: string,
+  autoBuildDir: string,
+  specId: string
+): string {
+  // Check worktree first - if it exists, it's the only source of truth
+  const worktreeSpecDir = path.join(
+    projectPath,
+    '.worktrees',
+    specId,
+    autoBuildDir,
+    'specs',
+    specId
+  );
+
+  if (existsSync(worktreeSpecDir)) {
+    return worktreeSpecDir;
+  }
+
+  // Fall back to main repo only if no worktree
+  return path.join(projectPath, autoBuildDir, 'specs', specId);
+}
+
+/**
  * Read the stored base branch from task_metadata.json
  * This is the branch the task was created from (set by user during task creation)
  */
@@ -289,7 +318,8 @@ export function registerWorktreeHandlers(
         }
 
         const runScript = path.join(sourcePath, 'run.py');
-        const specDir = path.join(project.path, project.autoBuildPath || '.auto-claude', 'specs', task.specId);
+        const autoBuildDir = project.autoBuildPath || '.auto-claude';
+        const specDir = getWorktreeAwareSpecDir(project.path, autoBuildDir, task.specId);
 
         if (!existsSync(specDir)) {
           debug('Spec directory not found:', specDir);
@@ -696,7 +726,8 @@ export function registerWorktreeHandlers(
         }
 
         const runScript = path.join(sourcePath, 'run.py');
-        const specDir = path.join(project.path, project.autoBuildPath || '.auto-claude', 'specs', task.specId);
+        const autoBuildDir = project.autoBuildPath || '.auto-claude';
+        const specDir = getWorktreeAwareSpecDir(project.path, autoBuildDir, task.specId);
         const args = [
           runScript,
           '--spec', task.specId,

@@ -44,6 +44,67 @@ def get_specs_dir(project_dir: Path, dev_mode: bool = False) -> Path:
     return project_dir / ".auto-claude" / "specs"
 
 
+def get_spec_dir_worktree_aware(project_dir: Path, spec_name: str) -> Path | None:
+    """Get the spec directory, preferring worktree if it exists.
+
+    When a worktree exists for a spec, it is the SINGLE source of truth.
+    The main repo's copy is stale once work begins in the worktree.
+
+    Args:
+        project_dir: The project root directory
+        spec_name: The spec folder name (e.g., "001-feature-name")
+
+    Returns:
+        Path to the spec directory (worktree if exists, else main), or None if not found
+    """
+    # Check worktree first - if it exists, it's the only source of truth
+    worktree_spec = project_dir / ".worktrees" / spec_name / ".auto-claude" / "specs" / spec_name
+    if worktree_spec.exists():
+        return worktree_spec
+
+    # Fall back to main only if no worktree
+    main_spec = project_dir / ".auto-claude" / "specs" / spec_name
+    if main_spec.exists():
+        return main_spec
+
+    return None
+
+
+def list_all_specs_worktree_aware(project_dir: Path) -> list[tuple[str, Path]]:
+    """List all specs, preferring worktree copies when they exist.
+
+    Returns a list of (spec_name, spec_path) tuples where spec_path points
+    to the worktree copy if one exists, otherwise the main copy.
+
+    Args:
+        project_dir: The project root directory
+
+    Returns:
+        List of (spec_name, spec_path) tuples, sorted by spec name
+    """
+    specs: dict[str, Path] = {}
+
+    # First, collect all specs from main repo
+    main_specs_dir = project_dir / ".auto-claude" / "specs"
+    if main_specs_dir.exists():
+        for spec_folder in main_specs_dir.iterdir():
+            if spec_folder.is_dir() and spec_folder.name[:3].isdigit():
+                specs[spec_folder.name] = spec_folder
+
+    # Then, override with worktree copies (worktree is source of truth)
+    worktrees_dir = project_dir / ".worktrees"
+    if worktrees_dir.exists():
+        for worktree in worktrees_dir.iterdir():
+            if worktree.is_dir():
+                worktree_spec = worktree / ".auto-claude" / "specs" / worktree.name
+                if worktree_spec.exists():
+                    # Worktree exists - use it instead of main
+                    specs[worktree.name] = worktree_spec
+
+    # Return sorted by spec name
+    return sorted(specs.items(), key=lambda x: x[0])
+
+
 def cleanup_orphaned_pending_folders(specs_dir: Path) -> None:
     """Remove orphaned pending folders that have no substantial content.
 
