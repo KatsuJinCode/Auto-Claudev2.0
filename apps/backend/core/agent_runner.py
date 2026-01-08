@@ -7,10 +7,16 @@ Provides a consistent abstraction layer that normalizes differences between
 CLI tools while maintaining all functionality.
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Literal
+
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk.types import ResultMessage
+
+logger = logging.getLogger(__name__)
 
 
 class AgentType(str, Enum):
@@ -106,7 +112,7 @@ async def run_agent(
         agent_type_enum = agent_type
 
     # Dispatch to agent-specific runner
-    # These will be implemented in subtasks 1.2-1.4
+    # Claude: implemented (1.2), Gemini: subtask 1.3, OpenCode: subtask 1.4
     if agent_type_enum == AgentType.CLAUDE:
         return await _run_claude(
             prompt=prompt,
@@ -139,7 +145,8 @@ async def run_agent(
         )
 
 
-# Placeholder implementations - to be completed in subtasks 1.2-1.4
+# Default model for Claude agent
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
 
 
 async def _run_claude(
@@ -152,13 +159,93 @@ async def _run_claude(
     """
     Run a Claude agent session using the Claude Agent SDK.
 
-    To be implemented in subtask 1.2.
+    This function wraps the ClaudeSDKClient to provide a simplified interface
+    for running Claude sessions. It handles client creation, message sending,
+    response collection, and error handling.
+
+    Args:
+        prompt: The message to send to Claude
+        project_dir: Working directory for the agent session
+        model: Claude model to use (defaults to claude-sonnet-4-5-20250929)
+        session_id: Optional session ID to resume a previous conversation
+        system_prompt: Optional system prompt to set context for the session
+
+    Returns:
+        AgentResult containing success status, output text, session ID, and any error
+
+    Example:
+        >>> result = await _run_claude(
+        ...     prompt="Create a hello world function in Python",
+        ...     project_dir=Path("/my/project"),
+        ... )
+        >>> if result.success:
+        ...     print(result.output)
     """
-    return AgentResult(
-        success=False,
-        output="",
-        error="Claude runner not yet implemented (subtask 1.2)",
+    resolved_model = model or DEFAULT_CLAUDE_MODEL
+
+    # Default system prompt if none provided
+    default_system_prompt = (
+        f"You are an expert full-stack developer. "
+        f"Your working directory is: {project_dir.resolve()}\n"
+        f"Your filesystem access is RESTRICTED to this directory only. "
+        f"Use relative paths (starting with ./) for all file operations."
     )
+
+    # Create client options
+    options = ClaudeAgentOptions(
+        model=resolved_model,
+        system_prompt=system_prompt or default_system_prompt,
+        cwd=str(project_dir.resolve()),
+        max_turns=1000,
+        resume=session_id,
+    )
+
+    output_text = ""
+    result_session_id: str | None = None
+
+    try:
+        client = ClaudeSDKClient(options=options)
+
+        async with client:
+            # Send the query
+            await client.query(prompt)
+
+            # Collect response
+            async for msg in client.receive_response():
+                msg_type = type(msg).__name__
+
+                # Handle AssistantMessage (text and tool use)
+                if msg_type == "AssistantMessage" and hasattr(msg, "content"):
+                    for block in msg.content:
+                        block_type = type(block).__name__
+                        if block_type == "TextBlock" and hasattr(block, "text"):
+                            output_text += block.text
+
+                # Handle ResultMessage (captures session_id for resume capability)
+                elif isinstance(msg, ResultMessage):
+                    result_session_id = msg.session_id
+                    logger.debug(
+                        "Claude session completed: session_id=%s, duration_ms=%s, num_turns=%s",
+                        result_session_id,
+                        msg.duration_ms,
+                        msg.num_turns,
+                    )
+
+        return AgentResult(
+            success=True,
+            output=output_text,
+            session_id=result_session_id,
+        )
+
+    except Exception as e:
+        error_msg = f"Claude session failed: {e}"
+        logger.exception(error_msg)
+        return AgentResult(
+            success=False,
+            output=output_text,  # Include any partial output
+            session_id=result_session_id,
+            error=error_msg,
+        )
 
 
 async def _run_gemini(
