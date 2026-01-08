@@ -167,6 +167,20 @@ def copy_spec_to_worktree(
     # Note: auto-claude/ is source code, .auto-claude/ is the installed instance
     target_spec_dir = worktree_path / ".auto-claude" / "specs" / spec_name
 
+    # If source is already inside the worktree, no copy needed - just return the path
+    # This happens when resuming a build with worktree-aware spec resolution
+    try:
+        source_resolved = source_spec_dir.resolve()
+        target_resolved = target_spec_dir.resolve()
+        worktree_resolved = worktree_path.resolve()
+
+        # Check if source is already inside the worktree
+        if str(source_resolved).startswith(str(worktree_resolved)):
+            # Source is already in worktree - no copy needed
+            return target_spec_dir if target_spec_dir.exists() else source_spec_dir
+    except (OSError, ValueError):
+        pass  # Fall through to copy logic
+
     # Create parent directories if needed
     target_spec_dir.parent.mkdir(parents=True, exist_ok=True)
 
