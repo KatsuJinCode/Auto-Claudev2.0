@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import path from 'path';
-import { existsSync } from 'fs';
+import * as fs from 'fs';
+import { existsSync, watchFile, unwatchFile, statSync, openSync, readSync, closeSync } from 'fs';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
@@ -40,6 +41,44 @@ export interface DiscoveryResult {
 }
 
 /**
+ * Options for reconnecting to a running agent
+ */
+export interface ReconnectionOptions {
+  /** If true, start tailing from end of file (skip existing content). Defaults to true. */
+  seekToEnd?: boolean;
+  /** Custom task ID to use for events. If not provided, uses specId. */
+  taskId?: string;
+}
+
+/**
+ * Result from reconnecting to an agent
+ */
+export interface ReconnectResult {
+  /** Whether reconnection was successful */
+  success: boolean;
+  /** Task ID used for event emissions */
+  taskId: string;
+  /** Error message if reconnection failed */
+  error?: string;
+}
+
+/**
+ * Internal tracking for reconnected agents
+ */
+interface ReconnectedAgent {
+  /** The agent registry entry */
+  entry: AgentRegistryEntry;
+  /** Task ID used for events */
+  taskId: string;
+  /** Current read position in the output file */
+  readPosition: number;
+  /** fs.watchFile interval reference */
+  watchActive: boolean;
+  /** PID check interval */
+  pidCheckInterval?: ReturnType<typeof setInterval>;
+}
+
+/**
  * Main AgentManager - orchestrates agent process lifecycle
  * This is a slim facade that delegates to focused modules
  */
@@ -58,6 +97,8 @@ export class AgentManager extends EventEmitter {
     metadata?: SpecCreationMetadata;
     swapCount: number;
   }> = new Map();
+  /** Track reconnected agents for output file tailing */
+  private reconnectedAgents: Map<string, ReconnectedAgent> = new Map();
 
   constructor() {
     super();
@@ -408,6 +449,281 @@ export class AgentManager extends EventEmitter {
       staleAgents,
       totalInRegistry: runningAgents.length
     };
+  }
+
+  /**
+   * Reconnect to a running detached agent and resume status updates
+   *
+   * This method enables the GUI to reconnect to agents that were running
+   * when the GUI was closed/restarted. It:
+   * 1. Validates the agent is still running (PID + executionId check)
+   * 2. Starts tailing the output file for new content
+   * 3. Monitors the process to detect completion/failure
+   * 4. Emits events to the renderer for UI updates
+   *
+   * @param entry - The agent registry entry (from discoverRunningAgents)
+   * @param options - Reconnection options
+   * @returns ReconnectResult indicating success/failure
+   */
+  reconnectToAgent(
+    entry: AgentRegistryEntry,
+    options: ReconnectionOptions = {}
+  ): ReconnectResult {
+    const { seekToEnd = true, taskId: customTaskId } = options;
+    const taskId = customTaskId || entry.specId;
+
+    // Check if already reconnected to this agent
+    if (this.reconnectedAgents.has(taskId)) {
+      return {
+        success: false,
+        taskId,
+        error: `Already reconnected to agent with taskId '${taskId}'`
+      };
+    }
+
+    // Validate the agent is still alive before reconnecting
+    const registry = getAgentRegistry();
+    const validation = registry.isAgentAlive(entry.specId);
+
+    if (!validation.alive) {
+      return {
+        success: false,
+        taskId,
+        error: `Agent validation failed: ${validation.reason}`
+      };
+    }
+
+    // Check if output file exists
+    if (!entry.outputFile || !existsSync(entry.outputFile)) {
+      return {
+        success: false,
+        taskId,
+        error: `Output file not found: ${entry.outputFile || 'not specified'}`
+      };
+    }
+
+    // Get initial file position
+    let readPosition = 0;
+    try {
+      const stats = statSync(entry.outputFile);
+      readPosition = seekToEnd ? stats.size : 0;
+    } catch (error) {
+      return {
+        success: false,
+        taskId,
+        error: `Failed to stat output file: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+
+    // Create tracking entry
+    const reconnectedAgent: ReconnectedAgent = {
+      entry,
+      taskId,
+      readPosition,
+      watchActive: true
+    };
+
+    this.reconnectedAgents.set(taskId, reconnectedAgent);
+
+    // Emit initial status - agent is reconnected and running
+    this.emit('execution-progress', taskId, {
+      phase: 'coding', // Assume coding phase for reconnected agents
+      phaseProgress: 50, // Unknown progress, show middle
+      overallProgress: 50,
+      message: 'Reconnected to running agent'
+    });
+
+    // Start file tailing using fs.watchFile
+    // We use watchFile instead of fs.watch because:
+    // - watchFile is more reliable across platforms
+    // - fs.watch can have issues with file modifications on Windows
+    // - watchFile uses polling which works well for log files
+    this.startFileTailing(reconnectedAgent);
+
+    // Start PID monitoring to detect when process exits
+    this.startPidMonitoring(reconnectedAgent);
+
+    return {
+      success: true,
+      taskId
+    };
+  }
+
+  /**
+   * Disconnect from a reconnected agent (stop tailing output)
+   *
+   * This stops monitoring the agent but does NOT kill the process.
+   * Use this when the GUI is closing or the user navigates away.
+   *
+   * @param taskId - The task ID of the reconnected agent
+   * @returns true if agent was found and disconnected
+   */
+  disconnectFromAgent(taskId: string): boolean {
+    const agent = this.reconnectedAgents.get(taskId);
+    if (!agent) {
+      return false;
+    }
+
+    // Stop file tailing
+    if (agent.watchActive) {
+      try {
+        unwatchFile(agent.entry.outputFile);
+      } catch {
+        // Ignore unwatch errors
+      }
+      agent.watchActive = false;
+    }
+
+    // Stop PID monitoring
+    if (agent.pidCheckInterval) {
+      clearInterval(agent.pidCheckInterval);
+      agent.pidCheckInterval = undefined;
+    }
+
+    this.reconnectedAgents.delete(taskId);
+    return true;
+  }
+
+  /**
+   * Check if an agent is reconnected (being monitored)
+   */
+  isReconnected(taskId: string): boolean {
+    return this.reconnectedAgents.has(taskId);
+  }
+
+  /**
+   * Get all reconnected agent task IDs
+   */
+  getReconnectedTasks(): string[] {
+    return Array.from(this.reconnectedAgents.keys());
+  }
+
+  /**
+   * Start tailing the output file for new content
+   */
+  private startFileTailing(agent: ReconnectedAgent): void {
+    const { entry, taskId } = agent;
+
+    // Listener for file changes
+    const onFileChange = (curr: fs.Stats, prev: fs.Stats) => {
+      // Check if file has grown
+      if (curr.size > agent.readPosition) {
+        this.readNewContent(agent);
+      }
+    };
+
+    // Start watching with polling interval
+    // 500ms is a good balance between responsiveness and CPU usage
+    watchFile(entry.outputFile, { interval: 500 }, onFileChange);
+  }
+
+  /**
+   * Read new content from the output file since last read position
+   */
+  private readNewContent(agent: ReconnectedAgent): void {
+    const { entry, taskId, readPosition } = agent;
+
+    try {
+      const stats = statSync(entry.outputFile);
+      const newSize = stats.size;
+
+      if (newSize <= readPosition) {
+        return; // No new content
+      }
+
+      // Open file with read-only flags for shared access
+      // This allows the agent process to continue writing while we read
+      const fd = openSync(entry.outputFile, 'r');
+
+      try {
+        const bytesToRead = newSize - readPosition;
+        const buffer = Buffer.alloc(bytesToRead);
+
+        // Read from the current position
+        const bytesRead = readSync(fd, buffer, 0, bytesToRead, readPosition);
+
+        if (bytesRead > 0) {
+          const newContent = buffer.toString('utf8', 0, bytesRead);
+          agent.readPosition = readPosition + bytesRead;
+
+          // Emit log events line by line (or as chunks)
+          this.emit('log', taskId, newContent);
+
+          // Parse for progress updates
+          this.parseOutputForProgress(taskId, newContent);
+        }
+      } finally {
+        closeSync(fd);
+      }
+    } catch (error) {
+      // File read error - could be temporary lock or file deleted
+      // Log but don't stop monitoring
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Avoid spamming console - only log if it's not a temporary read issue
+      if (!errorMessage.includes('EBUSY') && !errorMessage.includes('EAGAIN')) {
+        console.warn(`[AgentManager] Error reading output file for ${taskId}: ${errorMessage}`);
+      }
+    }
+  }
+
+  /**
+   * Parse output content for progress information
+   * This mirrors the logic in AgentProcessManager.spawnProcess
+   */
+  private parseOutputForProgress(taskId: string, content: string): void {
+    // Parse for phase transitions using the events helper
+    const phaseUpdate = this.events.parseExecutionPhase(content, 'coding', false);
+
+    if (phaseUpdate) {
+      this.emit('execution-progress', taskId, {
+        phase: phaseUpdate.phase,
+        phaseProgress: 50, // Unknown exact progress
+        overallProgress: this.events.calculateOverallProgress(phaseUpdate.phase, 50),
+        currentSubtask: phaseUpdate.currentSubtask,
+        message: phaseUpdate.message
+      });
+    }
+  }
+
+  /**
+   * Start monitoring the agent's PID to detect when it exits
+   */
+  private startPidMonitoring(agent: ReconnectedAgent): void {
+    const { entry, taskId } = agent;
+    const registry = getAgentRegistry();
+
+    // Check PID every 2 seconds
+    agent.pidCheckInterval = setInterval(() => {
+      const validation = registry.isAgentAlive(entry.specId);
+
+      if (!validation.alive) {
+        // Agent has exited - read any remaining output
+        this.readNewContent(agent);
+
+        // Determine exit status based on validation reason
+        const isCompleted = validation.reason?.includes('not running') ?? false;
+
+        // Update registry status
+        registry.updatePartial(entry.specId, {
+          status: isCompleted ? 'completed' : 'failed',
+          lastHeartbeat: new Date().toISOString()
+        });
+        registry.save();
+
+        // Emit exit event
+        this.emit('execution-progress', taskId, {
+          phase: isCompleted ? 'complete' : 'failed',
+          phaseProgress: 100,
+          overallProgress: isCompleted ? 100 : 50,
+          message: isCompleted ? 'Agent completed' : `Agent stopped: ${validation.reason}`
+        });
+
+        this.emit('exit', taskId, isCompleted ? 0 : 1, 'task-execution');
+
+        // Clean up monitoring
+        this.disconnectFromAgent(taskId);
+      }
+    }, 2000);
   }
 
   /**

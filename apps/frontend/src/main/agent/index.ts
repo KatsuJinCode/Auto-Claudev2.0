@@ -19,7 +19,9 @@ export { AgentRegistry, getAgentRegistry, resetAgentRegistry } from './agent-reg
 
 export type {
   DiscoveredAgent,
-  DiscoveryResult
+  DiscoveryResult,
+  ReconnectionOptions,
+  ReconnectResult
 } from './agent-manager';
 
 export type {
