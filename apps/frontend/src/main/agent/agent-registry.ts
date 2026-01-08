@@ -414,6 +414,118 @@ export class AgentRegistry {
       (agent) => agent.status === 'running'
     );
   }
+
+  /**
+   * Check if an agent process is truly alive
+   *
+   * This performs TWO critical checks to prevent PID reuse attacks:
+   * 1. Process.kill(pid, 0) - Tests if process exists without killing it
+   * 2. Lockfile validation - Ensures executionId matches lockfile content
+   *
+   * A recycled PID from a dead agent would fail the executionId check
+   * because the new process wouldn't have written our expected lockfile.
+   *
+   * @param specId - The spec ID of the agent to check
+   * @returns Object with alive status and reason for failure
+   */
+  isAgentAlive(specId: string): { alive: boolean; reason?: string } {
+    const entry = this.data.agents[specId];
+
+    if (!entry) {
+      return { alive: false, reason: 'Agent not found in registry' };
+    }
+
+    // Check 1: Is the process running?
+    if (!this.isProcessRunning(entry.pid)) {
+      return { alive: false, reason: 'Process is not running' };
+    }
+
+    // Check 2: Does the executionId in the lockfile match?
+    const lockfileValid = this.validateLockfile(entry.lockFile, entry.executionId);
+    if (!lockfileValid.valid) {
+      return { alive: false, reason: lockfileValid.reason };
+    }
+
+    return { alive: true };
+  }
+
+  /**
+   * Check if a process is running using the signal 0 technique
+   * Sending signal 0 to a process checks if it exists without sending any signal
+   *
+   * @param pid - Process ID to check
+   * @returns true if process exists, false otherwise
+   */
+  private isProcessRunning(pid: number): boolean {
+    try {
+      // Signal 0 doesn't kill the process - it just checks if it exists
+      // Returns true if process exists, throws error if not
+      process.kill(pid, 0);
+      return true;
+    } catch (error: unknown) {
+      // ESRCH means process doesn't exist
+      // EPERM means process exists but we don't have permission (still alive)
+      if (error && typeof error === 'object' && 'code' in error) {
+        const errCode = (error as { code: string }).code;
+        if (errCode === 'EPERM') {
+          // Process exists but permission denied - it's still alive
+          return true;
+        }
+      }
+      // ESRCH or other error - process doesn't exist
+      return false;
+    }
+  }
+
+  /**
+   * Validate that a lockfile exists and contains the expected executionId
+   * This is critical for PID reuse protection - a recycled PID won't have
+   * the same executionId in the lockfile
+   *
+   * @param lockFilePath - Path to the lockfile
+   * @param expectedExecutionId - The executionId we expect to find
+   * @returns Object with valid status and reason for failure
+   */
+  private validateLockfile(
+    lockFilePath: string,
+    expectedExecutionId: string
+  ): { valid: boolean; reason?: string } {
+    try {
+      // Check if lockfile exists
+      if (!fs.existsSync(lockFilePath)) {
+        return { valid: false, reason: 'Lockfile does not exist' };
+      }
+
+      // Read lockfile content
+      const content = fs.readFileSync(lockFilePath, 'utf-8').trim();
+
+      // Parse lockfile - expected format is JSON with executionId field
+      // or plain text with just the executionId
+      let lockfileExecutionId: string;
+
+      try {
+        // Try parsing as JSON first
+        const parsed = JSON.parse(content);
+        lockfileExecutionId = parsed.executionId;
+      } catch {
+        // If not JSON, treat content as plain executionId
+        lockfileExecutionId = content;
+      }
+
+      // Compare executionIds
+      if (lockfileExecutionId !== expectedExecutionId) {
+        return {
+          valid: false,
+          reason: `ExecutionId mismatch: expected '${expectedExecutionId}', found '${lockfileExecutionId}'`
+        };
+      }
+
+      return { valid: true };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { valid: false, reason: `Failed to read lockfile: ${errorMessage}` };
+    }
+  }
 }
 
 // Singleton instance for app-wide use
