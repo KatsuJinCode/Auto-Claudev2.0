@@ -98,6 +98,44 @@ export interface StopAgentResult {
 }
 
 /**
+ * Completion marker patterns to detect in agent output
+ * These are the explicit markers that indicate build completion or failure
+ */
+const COMPLETION_MARKERS = {
+  /** Explicit success markers - build completed successfully */
+  SUCCESS: [
+    '=== build complete ===',
+    'build complete - all subtasks completed',
+    'build complete!',
+    'qa passed',
+    'qa validation passed',
+    '✅ qa validation passed'
+  ],
+  /** Explicit failure markers - build failed */
+  FAILURE: [
+    'build failed',
+    'fatal error',
+    'fatal:',
+    '❌ build not complete',
+    'qa validation incomplete'
+  ]
+};
+
+/**
+ * Result from completion detection
+ */
+interface CompletionDetectionResult {
+  /** Whether completion was detected */
+  detected: boolean;
+  /** Type of completion: 'success' or 'failure' */
+  type?: 'success' | 'failure';
+  /** The marker that was detected */
+  marker?: string;
+  /** Additional context from the detection */
+  message?: string;
+}
+
+/**
  * Internal tracking for reconnected agents
  */
 interface ReconnectedAgent {
@@ -111,6 +149,8 @@ interface ReconnectedAgent {
   pidCheckInterval?: ReturnType<typeof setInterval>;
   /** Whether the agent has been marked as possibly crashed (to avoid repeated warnings) */
   markedAsPossiblyCrashed?: boolean;
+  /** Whether completion has already been detected for this agent (to avoid duplicate events) */
+  completionDetected?: boolean;
 }
 
 /**
@@ -540,12 +580,22 @@ export class AgentManager extends EventEmitter {
     // Create FileOutputStreamer for tailing the output file
     const streamer = createFileOutputStreamer();
 
+    // Create tracking entry early so we can reference it in event handlers
+    // (will be added to map after successful start)
+    const reconnectedAgent: ReconnectedAgent = {
+      entry,
+      taskId,
+      streamer
+    };
+
     // Wire up event handlers for the streamer
     streamer.on('line', (line: string) => {
       // Emit log events for each line
       this.emit('log', taskId, line + '\n');
       // Parse for progress updates
       this.parseOutputForProgress(taskId, line);
+      // Check for completion markers in output
+      this.checkLineForCompletion(reconnectedAgent, line);
     });
 
     streamer.on('data', (chunk: string) => {
@@ -583,13 +633,7 @@ export class AgentManager extends EventEmitter {
       };
     }
 
-    // Create tracking entry
-    const reconnectedAgent: ReconnectedAgent = {
-      entry,
-      taskId,
-      streamer
-    };
-
+    // Add the tracking entry to the map (already created earlier for event handlers)
     this.reconnectedAgents.set(taskId, reconnectedAgent);
 
     // Emit reconnect event so the IPC handlers can notify the renderer
@@ -1089,6 +1133,150 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
+   * Detect completion markers in output content
+   *
+   * This method scans agent output for explicit completion markers that indicate
+   * the build has finished (either successfully or with failure). These markers
+   * are emitted by the Python backend when the agent reaches a terminal state.
+   *
+   * Detection is case-insensitive and looks for substring matches.
+   *
+   * @param content - The output content to scan
+   * @returns CompletionDetectionResult with detection details
+   */
+  private detectCompletionMarker(content: string): CompletionDetectionResult {
+    const lowerContent = content.toLowerCase();
+
+    // Check for success markers first (more specific)
+    for (const marker of COMPLETION_MARKERS.SUCCESS) {
+      if (lowerContent.includes(marker.toLowerCase())) {
+        return {
+          detected: true,
+          type: 'success',
+          marker,
+          message: 'Build completed successfully'
+        };
+      }
+    }
+
+    // Check for failure markers
+    for (const marker of COMPLETION_MARKERS.FAILURE) {
+      if (lowerContent.includes(marker.toLowerCase())) {
+        return {
+          detected: true,
+          type: 'failure',
+          marker,
+          message: 'Build failed'
+        };
+      }
+    }
+
+    return { detected: false };
+  }
+
+  /**
+   * Handle detected completion for a reconnected agent
+   *
+   * When a completion marker is detected in the agent's output, this method:
+   * 1. Emits appropriate execution-progress and exit events
+   * 2. Updates the agent's status in the registry
+   * 3. Cleans up resources (registry entry, lockfile)
+   * 4. Disconnects from the agent
+   *
+   * This ensures the GUI updates correctly when a detached agent completes
+   * even if we detect completion before the process exits (via output markers
+   * rather than PID monitoring).
+   *
+   * @param agent - The reconnected agent that completed
+   * @param completion - The completion detection result
+   */
+  private handleAgentCompletion(
+    agent: ReconnectedAgent,
+    completion: CompletionDetectionResult
+  ): void {
+    const { taskId, entry, streamer } = agent;
+
+    // Mark completion detected to prevent duplicate handling
+    agent.completionDetected = true;
+
+    const isSuccess = completion.type === 'success';
+    const phase = isSuccess ? 'complete' : 'failed';
+    const exitCode = isSuccess ? 0 : 1;
+
+    console.log(
+      `[AgentManager] Completion detected for ${taskId} via output marker: ` +
+      `type=${completion.type}, marker="${completion.marker}"`
+    );
+
+    // Trigger a final read to capture any remaining output
+    streamer.triggerRead();
+
+    // Emit execution-progress event for UI update
+    this.emit('execution-progress', taskId, {
+      phase,
+      phaseProgress: 100,
+      overallProgress: isSuccess ? 100 : 50,
+      message: completion.message || (isSuccess ? 'Build completed successfully' : 'Build failed')
+    });
+
+    // Emit exit event
+    this.emit('exit', taskId, exitCode, 'task-execution');
+
+    // Update registry status to reflect completion
+    const registry = getAgentRegistry();
+    const currentEntry = registry.get(entry.specId);
+    if (currentEntry) {
+      registry.updatePartial(entry.specId, {
+        status: isSuccess ? 'completed' : 'failed'
+      });
+      registry.save();
+    }
+
+    // Clean up after a short delay to allow final output to be processed
+    // The PID monitoring will handle cleanup if the process is still running
+    // but we also schedule cleanup in case the process exits before PID monitoring catches it
+    setTimeout(() => {
+      // Check if still in reconnectedAgents (might have been cleaned up by PID monitoring)
+      if (this.reconnectedAgents.has(taskId)) {
+        // Check if process has exited
+        const validation = registry.isAgentAlive(entry.specId);
+        if (!validation.alive) {
+          // Process has exited - clean up
+          this.cleanupAgentOnExit(entry.specId);
+          this.disconnectFromAgent(taskId);
+          console.log(
+            `[AgentManager] Agent ${taskId} cleaned up after completion detection ` +
+            `(process exited)`
+          );
+        }
+        // If process is still alive, let PID monitoring handle the final cleanup
+      }
+    }, 2000);
+  }
+
+  /**
+   * Process output line for completion detection (called from streamer 'line' event)
+   *
+   * This is the entry point for completion detection when processing output from
+   * reconnected agents. It checks each line for completion markers and handles
+   * the completion if detected.
+   *
+   * @param agent - The reconnected agent
+   * @param line - The output line to check
+   */
+  private checkLineForCompletion(agent: ReconnectedAgent, line: string): void {
+    // Skip if completion already detected
+    if (agent.completionDetected) {
+      return;
+    }
+
+    const completion = this.detectCompletionMarker(line);
+    if (completion.detected) {
+      this.handleAgentCompletion(agent, completion);
+    }
+  }
+
+  /**
    * Start monitoring the agent's PID to detect when it exits
    *
    * When the process exits, this method:
@@ -1115,18 +1303,27 @@ export class AgentManager extends EventEmitter {
         // FileOutputStreamer.triggerRead() forces an immediate read of new content
         streamer.triggerRead();
 
-        // Determine exit status based on validation reason
-        const isCompleted = validation.reason?.includes('not running') ?? false;
+        // If completion was already detected via output markers, skip duplicate event emission
+        // but still do cleanup
+        if (!agent.completionDetected) {
+          // Determine exit status based on validation reason
+          const isCompleted = validation.reason?.includes('not running') ?? false;
 
-        // Emit exit event to update UI
-        this.emit('execution-progress', taskId, {
-          phase: isCompleted ? 'complete' : 'failed',
-          phaseProgress: 100,
-          overallProgress: isCompleted ? 100 : 50,
-          message: isCompleted ? 'Agent completed' : `Agent stopped: ${validation.reason}`
-        });
+          // Emit exit event to update UI
+          this.emit('execution-progress', taskId, {
+            phase: isCompleted ? 'complete' : 'failed',
+            phaseProgress: 100,
+            overallProgress: isCompleted ? 100 : 50,
+            message: isCompleted ? 'Agent completed' : `Agent stopped: ${validation.reason}`
+          });
 
-        this.emit('exit', taskId, isCompleted ? 0 : 1, 'task-execution');
+          this.emit('exit', taskId, isCompleted ? 0 : 1, 'task-execution');
+        } else {
+          console.log(
+            `[AgentManager] PID monitoring detected exit for ${taskId} but completion ` +
+            `already handled via output markers - skipping duplicate events`
+          );
+        }
 
         // Clean up: unregister from registry and delete lockfile
         // This ensures the registry accurately reflects running vs stopped agents
