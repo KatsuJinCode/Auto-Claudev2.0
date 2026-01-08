@@ -7,6 +7,7 @@
  * - AgentEvents: Event handling and progress parsing
  * - AgentProcessManager: Process spawning and lifecycle
  * - AgentQueueManager: Ideation and roadmap queue management
+ * - AgentRegistry: Persistent registry for detached agent processes
  */
 
 export { AgentManager } from './agent-manager';
@@ -14,6 +15,7 @@ export { AgentState } from './agent-state';
 export { AgentEvents } from './agent-events';
 export { AgentProcessManager } from './agent-process';
 export { AgentQueueManager } from './agent-queue';
+export { AgentRegistry, getAgentRegistry, resetAgentRegistry } from './agent-registry';
 
 export type {
   AgentProcess,
@@ -25,6 +27,11 @@ export type {
   IdeationProgressData,
   RoadmapProgressData
 } from './types';
+
+export type {
+  AgentRegistryEntry,
+  AgentStatus
+} from './agent-registry';
 
 // Re-export IdeationConfig from shared types for consistency
 export type { IdeationConfig } from '../../shared/types';
