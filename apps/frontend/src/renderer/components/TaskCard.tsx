@@ -47,6 +47,15 @@ interface TaskCardProps {
 export function TaskCard({ task, onClick }: TaskCardProps) {
   const [isStuck, setIsStuck] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
+  const [, setTimeRefresh] = useState(0); // Forces re-render for relative time display
+
+  // Refresh relative time display every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimeRefresh((prev) => prev + 1);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const isRunning = task.status === 'in_progress';
   const isBlocked = task.status === 'blocked';
