@@ -283,11 +283,17 @@ app.on('before-quit', async () => {
   usageMonitor.stop();
   console.warn('[main] Usage monitor stopped');
 
-  // Kill all running agent processes
+  // Disconnect from agents WITHOUT killing them
+  // This allows detached agents to continue running while GUI closes
+  // They will be rediscovered and reconnected on next GUI startup
   if (agentManager) {
-    await agentManager.killAll();
+    const disconnectedCount = agentManager.disconnectAll();
+    if (disconnectedCount > 0) {
+      console.warn(`[main] Disconnected from ${disconnectedCount} running agent(s) - they will continue running`);
+    }
   }
-  // Kill all terminal processes
+
+  // Kill all terminal processes (terminals are interactive and should close with GUI)
   if (terminalManager) {
     await terminalManager.killAll();
   }

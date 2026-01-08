@@ -617,6 +617,30 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
+   * Disconnect from all reconnected agents without killing their processes
+   *
+   * This is called during graceful GUI shutdown to stop monitoring agents
+   * while allowing them to continue running in the background. The agents
+   * remain registered and can be reconnected to when the GUI restarts.
+   *
+   * This is different from killAll() which terminates all processes.
+   *
+   * @returns Number of agents disconnected
+   */
+  disconnectAll(): number {
+    const taskIds = this.getReconnectedTasks();
+    let disconnectedCount = 0;
+
+    for (const taskId of taskIds) {
+      if (this.disconnectFromAgent(taskId)) {
+        disconnectedCount++;
+      }
+    }
+
+    return disconnectedCount;
+  }
+
+  /**
    * Parse output content for progress information
    * This mirrors the logic in AgentProcessManager.spawnProcess
    */
