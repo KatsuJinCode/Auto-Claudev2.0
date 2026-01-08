@@ -613,3 +613,203 @@ def _extract_opencode_session_id(stdout: str, stderr: str) -> str | None:
                 return match.group(1)
 
     return None
+
+
+# =============================================================================
+# Agent Availability Checking
+# =============================================================================
+
+# CLI executable names for each agent type
+# Maps agent type to the executable name that should be in PATH
+_AGENT_CLI_EXECUTABLES: dict[str, str] = {
+    "claude": "claude",
+    "gemini": "gemini",
+    "opencode": "opencode",
+}
+
+
+def check_agent_available(agent_type: AgentTypeLiteral | AgentType) -> bool:
+    """
+    Check if an agent's CLI tool is installed and available in PATH.
+
+    This function verifies that the CLI executable for a given agent type
+    exists and can be found. Use this before attempting to run an agent
+    to provide better error messages to users.
+
+    Args:
+        agent_type: Agent type to check ("claude", "gemini", or "opencode")
+
+    Returns:
+        True if the agent's CLI tool is installed and available, False otherwise
+
+    Example:
+        >>> if check_agent_available("gemini"):
+        ...     print("Gemini CLI is ready to use")
+        ... else:
+        ...     print("Please install Gemini CLI first")
+    """
+    # Normalize to string if enum
+    if isinstance(agent_type, AgentType):
+        agent_str = agent_type.value
+    else:
+        agent_str = agent_type.lower()
+
+    # Validate agent type
+    try:
+        AgentType(agent_str)
+    except ValueError:
+        logger.warning("Unknown agent type: %s", agent_str)
+        return False
+
+    # Get the CLI executable name for this agent
+    executable = _AGENT_CLI_EXECUTABLES.get(agent_str)
+    if not executable:
+        logger.warning("No CLI executable mapping for agent: %s", agent_str)
+        return False
+
+    # Check if the executable exists in PATH
+    path = shutil.which(executable)
+    if path:
+        logger.debug("Agent %s CLI found at: %s", agent_str, path)
+        return True
+    else:
+        logger.debug("Agent %s CLI not found in PATH", agent_str)
+        return False
+
+
+def get_agent_cli_path(agent_type: AgentTypeLiteral | AgentType) -> str | None:
+    """
+    Get the full path to an agent's CLI executable.
+
+    Args:
+        agent_type: Agent type to look up ("claude", "gemini", or "opencode")
+
+    Returns:
+        Full path to the CLI executable, or None if not found
+
+    Example:
+        >>> path = get_agent_cli_path("claude")
+        >>> if path:
+        ...     print(f"Claude CLI is at: {path}")
+    """
+    # Normalize to string if enum
+    if isinstance(agent_type, AgentType):
+        agent_str = agent_type.value
+    else:
+        agent_str = agent_type.lower()
+
+    executable = _AGENT_CLI_EXECUTABLES.get(agent_str)
+    if not executable:
+        return None
+
+    return shutil.which(executable)
+
+
+def get_installed_agents() -> list[str]:
+    """
+    Get a list of all agent types that have their CLI tools installed.
+
+    This function checks each supported agent type and returns only those
+    whose CLI tools are currently available in PATH.
+
+    Returns:
+        List of agent type names that are installed and available
+
+    Example:
+        >>> installed = get_installed_agents()
+        >>> print(f"Available agents: {', '.join(installed)}")
+        Available agents: claude, gemini
+    """
+    installed = []
+    for agent_type in AgentType:
+        if check_agent_available(agent_type):
+            installed.append(agent_type.value)
+    return installed
+
+
+def get_missing_agents() -> list[str]:
+    """
+    Get a list of all agent types that are NOT installed.
+
+    This function checks each supported agent type and returns only those
+    whose CLI tools are NOT available in PATH.
+
+    Returns:
+        List of agent type names that are not installed
+
+    Example:
+        >>> missing = get_missing_agents()
+        >>> if missing:
+        ...     print(f"Not installed: {', '.join(missing)}")
+    """
+    missing = []
+    for agent_type in AgentType:
+        if not check_agent_available(agent_type):
+            missing.append(agent_type.value)
+    return missing
+
+
+def validate_agent_available(agent_type: AgentTypeLiteral | AgentType) -> tuple[bool, str]:
+    """
+    Validate that an agent is available and return a helpful error message if not.
+
+    This is a convenience function that combines availability checking with
+    user-friendly error message generation.
+
+    Args:
+        agent_type: Agent type to validate ("claude", "gemini", or "opencode")
+
+    Returns:
+        Tuple of (is_available, error_message)
+        - is_available: True if agent CLI is installed
+        - error_message: Empty string if available, descriptive error if not
+
+    Example:
+        >>> available, error = validate_agent_available("opencode")
+        >>> if not available:
+        ...     print(f"Error: {error}")
+    """
+    # Normalize to string if enum
+    if isinstance(agent_type, AgentType):
+        agent_str = agent_type.value
+    else:
+        agent_str = agent_type.lower()
+
+    # Validate it's a known agent type
+    try:
+        AgentType(agent_str)
+    except ValueError:
+        valid_agents = ", ".join(t.value for t in AgentType)
+        return False, f"Unknown agent type: '{agent_str}'. Valid types: {valid_agents}"
+
+    # Check if CLI is available
+    if check_agent_available(agent_str):
+        return True, ""
+
+    # Build helpful error message
+    executable = _AGENT_CLI_EXECUTABLES.get(agent_str, agent_str)
+
+    # Agent-specific installation hints
+    install_hints = {
+        "claude": (
+            "Install Claude CLI: npm install -g @anthropic-ai/claude-code\n"
+            "Then authenticate: claude login"
+        ),
+        "gemini": (
+            "Install Gemini CLI: npm install -g @anthropic-ai/gemini\n"
+            "See: https://github.com/anthropic/gemini-cli"
+        ),
+        "opencode": (
+            "Install OpenCode CLI: go install github.com/opencode/cli@latest\n"
+            "See: https://github.com/opencode/cli"
+        ),
+    }
+
+    hint = install_hints.get(agent_str, f"Please install the '{executable}' CLI tool")
+
+    error_msg = (
+        f"{agent_str.capitalize()} agent CLI not found. "
+        f"The '{executable}' command must be available in your PATH.\n\n{hint}"
+    )
+
+    return False, error_msg
