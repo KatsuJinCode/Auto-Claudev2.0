@@ -8,7 +8,10 @@ Main autonomous agent loop that runs the coder agent to implement subtasks.
 import asyncio
 import logging
 from pathlib import Path
+from typing import Optional
 
+from config import get_project_agent
+from core.agent_runner import AgentTypeLiteral
 from core.client import create_client
 from linear_updater import (
     LinearTaskState,
@@ -75,6 +78,7 @@ async def run_autonomous_agent(
     verbose: bool = False,
     source_spec_dir: Path | None = None,
     resume_session_id: str | None = None,
+    agent_type: Optional[str] = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -82,15 +86,28 @@ async def run_autonomous_agent(
     The agent can use subagents (via Task tool) for parallel execution if needed.
     This is decided by the agent itself based on the task complexity.
 
+    Supports multiple AI agent backends:
+    - Claude (via ClaudeSDKClient with rich streaming and tool callbacks)
+    - Gemini (via CLI subprocess)
+    - OpenCode (via CLI subprocess)
+
     Args:
         project_dir: Root directory for the project
         spec_dir: Directory containing the spec (auto-claude/specs/001-name/)
-        model: Claude model to use
+        model: Model to use (agent-specific)
         max_iterations: Maximum number of iterations (None for unlimited)
         verbose: Whether to show detailed output
         source_spec_dir: Original spec directory in main project (for syncing from worktree)
-        resume_session_id: Optional Claude CLI session ID to resume a previous interrupted session
+        resume_session_id: Optional agent session ID to resume a previous interrupted session
+        agent_type: AI agent backend to use (claude, gemini, opencode). If None, loads from
+                   project config or falls back to 'claude'.
     """
+    # Resolve agent type from config if not provided via CLI
+    resolved_agent_type: AgentTypeLiteral = get_project_agent(project_dir, agent_type)  # type: ignore[assignment]
+
+    # Display which agent is being used
+    print_status(f"Using agent: {resolved_agent_type.upper()}", "info")
+
     # Initialize recovery manager (handles memory persistence)
     recovery_manager = RecoveryManager(spec_dir, project_dir)
 
@@ -256,13 +273,19 @@ async def run_autonomous_agent(
         # Create client with phase-specific model and thinking
         # On first iteration, try to resume previous session if ID provided
         session_to_resume = resume_session_id if iteration == 1 else None
-        client = create_client(
-            project_dir,
-            spec_dir,
-            phase_model,
-            max_thinking_tokens=phase_thinking_budget,
-            resume_session_id=session_to_resume,
-        )
+
+        # Only create Claude SDK client when using Claude agent
+        # Non-Claude agents (Gemini, OpenCode) use CLI subprocess and don't need a client
+        if resolved_agent_type == "claude":
+            client = create_client(
+                project_dir,
+                spec_dir,
+                phase_model,
+                max_thinking_tokens=phase_thinking_budget,
+                resume_session_id=session_to_resume,
+            )
+        else:
+            client = None
 
         # Generate appropriate prompt
         if first_run:
@@ -339,16 +362,39 @@ async def run_autonomous_agent(
             task_logger.set_subtask(subtask_id)
             task_logger.set_session(iteration)
 
-        # Run session with async context manager
-        async with client:
-            status, response, claude_session_id = await run_agent_session(
-                client, prompt, spec_dir, verbose, phase=current_log_phase
+        # Run session with appropriate handling for agent type
+        # Claude uses async context manager, non-Claude agents don't need it
+        if resolved_agent_type == "claude" and client is not None:
+            async with client:
+                status, response, agent_session_id = await run_agent_session(
+                    client,
+                    prompt,
+                    spec_dir,
+                    verbose,
+                    phase=current_log_phase,
+                    agent_type=resolved_agent_type,
+                    project_dir=project_dir,
+                    model=phase_model,
+                    session_id=session_to_resume,
+                )
+        else:
+            # Non-Claude agents (Gemini, OpenCode) use CLI subprocess
+            status, response, agent_session_id = await run_agent_session(
+                None,  # No client needed for non-Claude agents
+                prompt,
+                spec_dir,
+                verbose,
+                phase=current_log_phase,
+                agent_type=resolved_agent_type,
+                project_dir=project_dir,
+                model=phase_model,
+                session_id=session_to_resume,
             )
 
-        # Store the Claude session ID for potential resume capability
+        # Store the agent session ID for potential resume capability
         # This enables recovering stuck tasks by resuming the interrupted session
-        if claude_session_id:
-            status_manager.update_claude_session_id(claude_session_id)
+        if agent_session_id:
+            status_manager.update_claude_session_id(agent_session_id)
 
         # === POST-SESSION PROCESSING (100% reliable) ===
         if subtask_id and not first_run:
