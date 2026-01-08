@@ -16,6 +16,10 @@ if str(_PARENT_DIR) not in sys.path:
 
 # Import only what we need at module level
 # Heavy imports are lazy-loaded in functions to avoid import errors
+# Agent availability validation imports (lazy-loaded pattern would be overkill here)
+from config import get_project_agent
+from core.agent_runner import get_installed_agents, validate_agent_available
+from dependencies import check_unmet_dependencies
 from progress import print_paused_banner
 from review import ReviewState
 from ui import (
@@ -42,16 +46,11 @@ from workspace import (
     handle_workspace_choice,
     setup_workspace,
 )
-from dependencies import check_unmet_dependencies
 
 from .input_handlers import (
     read_from_file,
     read_multiline_input,
 )
-
-# Agent availability validation imports (lazy-loaded pattern would be overkill here)
-from config import get_project_agent
-from core.agent_runner import get_installed_agents, validate_agent_available
 
 
 def handle_build_command(
@@ -166,8 +165,8 @@ def handle_build_command(
         ]
 
         for dep in unmet_deps:
-            spec_id = dep['spec_id']
-            status = dep['status']
+            spec_id = dep["spec_id"]
+            status = dep["status"]
 
             # Format status with appropriate indicator
             if status == "not_found":
@@ -186,12 +185,16 @@ def handle_build_command(
             content.append(f"  {icon(Icons.BLOCKED)} {bold(spec_id)} {status_text}")
             content.append(f"     └─ {muted(action)}")
 
-        content.extend([
-            "",
-            highlight("Complete the required dependencies first, then retry."),
-            "",
-            muted("Dependencies are satisfied when merged or all subtasks are completed."),
-        ])
+        content.extend(
+            [
+                "",
+                highlight("Complete the required dependencies first, then retry."),
+                "",
+                muted(
+                    "Dependencies are satisfied when merged or all subtasks are completed."
+                ),
+            ]
+        )
         print(box(content, width=70, style="heavy"))
         print()
         sys.exit(1)

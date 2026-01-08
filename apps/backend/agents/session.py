@@ -13,7 +13,6 @@ Supports multiple AI agent backends:
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import ResultMessage
@@ -324,10 +323,10 @@ async def _run_non_claude_agent_session(
     verbose: bool,
     phase: LogPhase,
     agent_type: AgentTypeLiteral,
-    project_dir: Optional[Path],
-    model: Optional[str],
-    session_id: Optional[str],
-    system_prompt: Optional[str],
+    project_dir: Path | None,
+    model: str | None,
+    session_id: str | None,
+    system_prompt: str | None,
 ) -> tuple[str, str, str | None]:
     """
     Run a non-Claude agent session (Gemini or OpenCode) via CLI subprocess.
@@ -433,17 +432,17 @@ async def _run_non_claude_agent_session(
 
 
 async def run_agent_session(
-    client: Optional[ClaudeSDKClient],
+    client: ClaudeSDKClient | None,
     message: str,
     spec_dir: Path,
     verbose: bool = False,
     phase: LogPhase = LogPhase.CODING,
     *,
     agent_type: AgentTypeLiteral = "claude",
-    project_dir: Optional[Path] = None,
-    model: Optional[str] = None,
-    session_id: Optional[str] = None,
-    system_prompt: Optional[str] = None,
+    project_dir: Path | None = None,
+    model: str | None = None,
+    session_id: str | None = None,
+    system_prompt: str | None = None,
 ) -> tuple[str, str, str | None]:
     """
     Run a single agent session using the specified agent backend.

@@ -156,20 +156,24 @@ def check_unmet_dependencies(project_dir: Path, spec_dir: Path) -> list[dict]:
         dep_dir = find_spec_dir(project_dir, dep_id)
 
         if dep_dir is None:
-            unmet.append({
-                "spec_id": dep_id,
-                "status": "not_found",
-                "reason": f"Dependency spec '{dep_id}' does not exist",
-            })
+            unmet.append(
+                {
+                    "spec_id": dep_id,
+                    "status": "not_found",
+                    "reason": f"Dependency spec '{dep_id}' does not exist",
+                }
+            )
             continue
 
         if not is_spec_merged_or_complete(dep_dir):
             status = get_spec_status(dep_dir)
-            unmet.append({
-                "spec_id": dep_id,
-                "status": status,
-                "reason": f"Dependency spec '{dep_id}' is not yet complete (status: {status})",
-            })
+            unmet.append(
+                {
+                    "spec_id": dep_id,
+                    "status": status,
+                    "reason": f"Dependency spec '{dep_id}' is not yet complete (status: {status})",
+                }
+            )
 
     return unmet
 
@@ -284,7 +288,10 @@ def validate_dependencies(
     # Check if any dependency directly or indirectly depends on spec_id
     for dep_id in depends_on:
         if _has_path_to(project_dir, dep_id, spec_id, set()):
-            return False, f"Circular dependency: '{dep_id}' already depends on '{spec_id}'"
+            return (
+                False,
+                f"Circular dependency: '{dep_id}' already depends on '{spec_id}'",
+            )
 
     return True, ""
 

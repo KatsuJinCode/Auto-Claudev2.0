@@ -15,6 +15,7 @@ _PARENT_DIR = Path(__file__).parent.parent
 if str(_PARENT_DIR) not in sys.path:
     sys.path.insert(0, str(_PARENT_DIR))
 
+from phase_config import get_available_agents, get_default_agent
 from ui import (
     Icons,
     icon,
@@ -40,7 +41,6 @@ from .utils import (
     print_banner,
     setup_environment,
 )
-from phase_config import get_available_agents, get_default_agent
 from .workspace_commands import (
     handle_cleanup_worktrees_command,
     handle_discard_command,

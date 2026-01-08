@@ -10,6 +10,7 @@
 // Task status columns in Kanban board order
 export const TASK_STATUS_COLUMNS = [
   'backlog',
+  'blocked',
   'in_progress',
   'ai_review',
   'human_review',

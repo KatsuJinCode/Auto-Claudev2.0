@@ -242,6 +242,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefreshClick
   const tasksByStatus = useMemo(() => {
     const grouped: Record<TaskStatus, Task[]> = {
       backlog: [],
+      blocked: [],
       in_progress: [],
       ai_review: [],
       human_review: [],

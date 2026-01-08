@@ -8,7 +8,6 @@ Main autonomous agent loop that runs the coder agent to implement subtasks.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
 
 from config import get_project_agent
 from core.agent_runner import AgentTypeLiteral
@@ -78,7 +77,7 @@ async def run_autonomous_agent(
     verbose: bool = False,
     source_spec_dir: Path | None = None,
     resume_session_id: str | None = None,
-    agent_type: Optional[str] = None,
+    agent_type: str | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.

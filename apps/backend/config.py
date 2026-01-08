@@ -22,12 +22,10 @@ Example config.json:
 
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
 
 from phase_config import (
-    AgentProviderLiteral,
     get_available_agents,
     get_default_agent,
     get_default_model_for_agent,
@@ -56,7 +54,7 @@ class AutoClaudeConfig:
     """
 
     default_agent: str = "claude"
-    default_model: Optional[str] = None
+    default_model: str | None = None
 
     def __post_init__(self) -> None:
         """Validate and normalize configuration values after initialization."""
@@ -219,7 +217,7 @@ def save_config(project_dir: Path, config: AutoClaudeConfig) -> bool:
         return False
 
 
-def get_project_agent(project_dir: Path, cli_agent: Optional[str] = None) -> str:
+def get_project_agent(project_dir: Path, cli_agent: str | None = None) -> str:
     """
     Get the agent to use for a project.
 
@@ -253,8 +251,8 @@ def get_project_agent(project_dir: Path, cli_agent: Optional[str] = None) -> str
 
 def get_project_model(
     project_dir: Path,
-    cli_model: Optional[str] = None,
-    cli_agent: Optional[str] = None,
+    cli_model: str | None = None,
+    cli_agent: str | None = None,
 ) -> str:
     """
     Get the model to use for a project.
@@ -313,8 +311,8 @@ def ensure_config_exists(project_dir: Path) -> AutoClaudeConfig:
 
 def update_config(
     project_dir: Path,
-    default_agent: Optional[str] = None,
-    default_model: Optional[str] = None,
+    default_agent: str | None = None,
+    default_model: str | None = None,
 ) -> AutoClaudeConfig:
     """
     Update specific fields in the project configuration.

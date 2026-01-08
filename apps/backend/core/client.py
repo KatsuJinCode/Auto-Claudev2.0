@@ -13,7 +13,6 @@ Supports multiple AI agent backends:
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 from auto_claude_tools import (
     create_auto_claude_mcp_server,
@@ -144,7 +143,7 @@ def create_client(
     max_thinking_tokens: int | None = None,
     resume_session_id: str | None = None,
     agent_backend: AgentTypeLiteral = "claude",
-) -> Optional[ClaudeSDKClient]:
+) -> ClaudeSDKClient | None:
     """
     Create an AI agent client based on the specified backend.
 

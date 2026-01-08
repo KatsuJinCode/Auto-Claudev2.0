@@ -545,7 +545,9 @@ async def _run_opencode(
                 session_id=result_session_id,
             )
         else:
-            error_msg = f"OpenCode CLI returned non-zero exit code: {process.returncode}"
+            error_msg = (
+                f"OpenCode CLI returned non-zero exit code: {process.returncode}"
+            )
             if stderr_text:
                 error_msg += f"\nStderr: {stderr_text}"
 
@@ -749,7 +751,9 @@ def get_missing_agents() -> list[str]:
     return missing
 
 
-def validate_agent_available(agent_type: AgentTypeLiteral | AgentType) -> tuple[bool, str]:
+def validate_agent_available(
+    agent_type: AgentTypeLiteral | AgentType,
+) -> tuple[bool, str]:
     """
     Validate that an agent is available and return a helpful error message if not.
 
