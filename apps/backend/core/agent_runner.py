@@ -115,7 +115,6 @@ async def run_agent(
         agent_type_enum = agent_type
 
     # Dispatch to agent-specific runner
-    # Claude: implemented (1.2), Gemini: subtask 1.3, OpenCode: subtask 1.4
     if agent_type_enum == AgentType.CLAUDE:
         return await _run_claude(
             prompt=prompt,
@@ -432,6 +431,10 @@ def _extract_gemini_session_id(stdout: str, stderr: str) -> str | None:
     return None
 
 
+# Default model for OpenCode agent
+DEFAULT_OPENCODE_MODEL = "anthropic/claude-sonnet-4-20250514"
+
+
 async def _run_opencode(
     prompt: str,
     project_dir: Path,
@@ -442,10 +445,171 @@ async def _run_opencode(
     """
     Run an OpenCode agent session using the OpenCode CLI.
 
-    To be implemented in subtask 1.4.
+    This function invokes the OpenCode CLI tool via subprocess to interact with
+    various AI models through the OpenCode interface. It supports session resumption
+    and model selection through CLI flags.
+
+    Args:
+        prompt: The message to send to OpenCode
+        project_dir: Working directory for the agent session
+        model: Model to use in provider/model format (defaults to anthropic/claude-sonnet-4-20250514)
+        session_id: Optional session ID to resume a previous conversation
+        system_prompt: System prompt (set via OPENCODE_SYSTEM_PROMPT env var)
+
+    Returns:
+        AgentResult containing success status, output text, session ID, and any error
+
+    Note:
+        The OpenCode CLI must be installed and available in PATH.
+        OpenCode uses `opencode run` as the command (not just `opencode`).
+        Session resumption uses `--session` flag (not `--resume`).
+        System prompts are passed via environment variable since OpenCode CLI
+        doesn't support a --system-prompt flag.
+
+    Example:
+        >>> result = await _run_opencode(
+        ...     prompt="Create a hello world function in Python",
+        ...     project_dir=Path("/my/project"),
+        ... )
+        >>> if result.success:
+        ...     print(result.output)
     """
-    return AgentResult(
-        success=False,
-        output="",
-        error="OpenCode runner not yet implemented (subtask 1.4)",
-    )
+    # Check if opencode CLI is available
+    opencode_path = shutil.which("opencode")
+    if not opencode_path:
+        return AgentResult(
+            success=False,
+            output="",
+            error="OpenCode CLI not found. Please install it and ensure it's in your PATH.",
+        )
+
+    resolved_model = model or DEFAULT_OPENCODE_MODEL
+
+    # Build the command - opencode uses "opencode run" as the command
+    cmd = ["opencode", "run"]
+
+    # Add model flag (format: provider/model)
+    cmd.extend(["--model", resolved_model])
+
+    # Add session flag if session_id provided (opencode uses --session, not --resume)
+    if session_id:
+        cmd.extend(["--session", session_id])
+
+    # Add the prompt
+    cmd.append(prompt)
+
+    # Set up environment with system prompt if provided
+    env = os.environ.copy()
+    if system_prompt:
+        env["OPENCODE_SYSTEM_PROMPT"] = system_prompt
+
+    output_text = ""
+    result_session_id: str | None = None
+
+    try:
+        logger.debug(
+            "Running OpenCode CLI: cmd=%s, cwd=%s",
+            " ".join(cmd),
+            project_dir.resolve(),
+        )
+
+        # Run the opencode command asynchronously
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(project_dir.resolve()),
+            env=env,
+        )
+
+        stdout, stderr = await process.communicate()
+
+        # Decode output
+        output_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+
+        # Check for success
+        if process.returncode == 0:
+            # Try to extract session ID from output if present
+            result_session_id = _extract_opencode_session_id(output_text, stderr_text)
+
+            logger.debug(
+                "OpenCode session completed: session_id=%s, return_code=%s",
+                result_session_id,
+                process.returncode,
+            )
+
+            return AgentResult(
+                success=True,
+                output=output_text,
+                session_id=result_session_id,
+            )
+        else:
+            error_msg = f"OpenCode CLI returned non-zero exit code: {process.returncode}"
+            if stderr_text:
+                error_msg += f"\nStderr: {stderr_text}"
+
+            logger.warning(error_msg)
+
+            return AgentResult(
+                success=False,
+                output=output_text,  # Include any partial output
+                session_id=result_session_id,
+                error=error_msg,
+            )
+
+    except FileNotFoundError:
+        error_msg = "OpenCode CLI executable not found"
+        logger.exception(error_msg)
+        return AgentResult(
+            success=False,
+            output="",
+            error=error_msg,
+        )
+    except Exception as e:
+        error_msg = f"OpenCode session failed: {e}"
+        logger.exception(error_msg)
+        return AgentResult(
+            success=False,
+            output=output_text,  # Include any partial output
+            session_id=result_session_id,
+            error=error_msg,
+        )
+
+
+def _extract_opencode_session_id(stdout: str, stderr: str) -> str | None:
+    """
+    Extract session ID from OpenCode CLI output.
+
+    The OpenCode CLI may output session information in various formats.
+    This function attempts to parse and extract the session ID for
+    later resumption.
+
+    Args:
+        stdout: Standard output from the OpenCode CLI
+        stderr: Standard error from the OpenCode CLI
+
+    Returns:
+        The extracted session ID, or None if not found
+    """
+    import re
+
+    # Common patterns for session IDs in CLI output
+    # OpenCode uses --session flag, so look for related patterns
+    patterns = [
+        r"[Ss]ession[_\s][Ii][Dd]:\s*([a-zA-Z0-9_-]+)",
+        r"--session\s+([a-zA-Z0-9_-]+)",
+        r'"session_id":\s*"([a-zA-Z0-9_-]+)"',
+        r'"session":\s*"([a-zA-Z0-9_-]+)"',
+        # OpenCode may use UUID-style session IDs
+        r"session[:\s]+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
+    ]
+
+    # Check both stdout and stderr
+    for text in [stdout, stderr]:
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+
+    return None
