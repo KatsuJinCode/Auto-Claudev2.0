@@ -18,6 +18,12 @@ Usage:
         --workflow-type "feature" \
         --chunks "Create module structure,Implement core logic,Add tests"
 
+    # Spec with dependencies on other specs:
+    python add_spec.py --project-dir /path/to/project \
+        --name "feature-b" \
+        --description "Feature B that requires Feature A" \
+        --depends-on "001-feature-a"
+
     # Multi-phase spec with dependencies (from JSON file):
     python add_spec.py --project-dir /path/to/project --name "complex-feature" --from-json phases.json
 
@@ -437,6 +443,11 @@ def main():
         default="",
         help="Path to JSON file defining multi-phase spec (see docstring for format)",
     )
+    parser.add_argument(
+        "--depends-on",
+        default="",
+        help="Comma-separated list of spec IDs this spec depends on (e.g., '001-feature-a,002-feature-b')",
+    )
 
     args = parser.parse_args()
 
@@ -447,6 +458,7 @@ def main():
         f.strip() for f in args.files_to_reference.split(",") if f.strip()
     ]
     chunks = [c.strip() for c in args.chunks.split(",") if c.strip()]
+    depends_on = [d.strip() for d in args.depends_on.split(",") if d.strip()]
 
     try:
         if args.from_json:
