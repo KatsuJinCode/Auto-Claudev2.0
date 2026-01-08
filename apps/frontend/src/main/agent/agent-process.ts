@@ -85,6 +85,126 @@ export interface SpawnAgentResult {
 }
 
 /**
+ * Result from attempting to kill an agent process
+ */
+export interface KillAgentResult {
+  /** Whether the kill signal was sent successfully */
+  success: boolean;
+  /** Error message if the kill failed */
+  error?: string;
+  /** The signal that was sent */
+  signal: NodeJS.Signals | 'SIGBREAK';
+  /** Whether the process is confirmed terminated */
+  terminated?: boolean;
+}
+
+/**
+ * Check if a process is running by attempting to send signal 0
+ * Signal 0 doesn't actually send a signal, but tests if the process exists
+ *
+ * @param pid - The process ID to check
+ * @returns true if the process is running, false otherwise
+ */
+export function isProcessRunning(pid: number): boolean {
+  try {
+    // Signal 0 is a special case - it checks if the process exists
+    // without actually sending a signal
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    // ESRCH = No such process (process doesn't exist)
+    // EPERM = Operation not permitted (process exists but we can't signal it)
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM') {
+      // Process exists but we don't have permission to signal it
+      // This counts as "running" for our purposes
+      return true;
+    }
+    // ESRCH or any other error means process doesn't exist
+    return false;
+  }
+}
+
+/**
+ * Kill a detached agent process using platform-specific signals
+ *
+ * This function sends a graceful shutdown signal to the agent:
+ * - On Windows: Sends CTRL_BREAK_EVENT (via SIGBREAK) which allows the process
+ *   to handle the signal and shut down gracefully
+ * - On Unix: Sends SIGTERM which is the standard graceful termination signal
+ *
+ * Note: For detached processes spawned with detached: true, this function
+ * operates on the PID directly rather than through the ChildProcess object.
+ *
+ * @param pid - The process ID of the agent to kill
+ * @returns Result indicating success or failure with details
+ */
+export function killAgentProcess(pid: number): KillAgentResult {
+  const isWindows = process.platform === 'win32';
+
+  // Select the appropriate signal for the platform
+  // On Windows, SIGBREAK maps to CTRL_BREAK_EVENT which is the graceful
+  // shutdown signal for console applications. This allows the process to
+  // handle the signal and clean up before exiting.
+  // On Unix, SIGTERM is the standard "please terminate" signal that allows
+  // processes to handle cleanup before exiting.
+  const signal: NodeJS.Signals | 'SIGBREAK' = isWindows ? 'SIGBREAK' : 'SIGTERM';
+
+  try {
+    // Check if the process is running first
+    if (!isProcessRunning(pid)) {
+      return {
+        success: true,
+        signal,
+        terminated: true,
+        error: 'Process was not running'
+      };
+    }
+
+    // Send the kill signal
+    // On Windows with SIGBREAK, this sends CTRL_BREAK_EVENT to the process group
+    // On Unix with SIGTERM, this sends the termination signal to the process
+    process.kill(pid, signal);
+
+    return {
+      success: true,
+      signal,
+      terminated: false // Signal sent, but process may still be running
+    };
+  } catch (error: unknown) {
+    const nodeError = error as NodeJS.ErrnoException;
+    const errorMessage = nodeError.message || String(error);
+
+    // Handle specific error codes
+    if (nodeError.code === 'ESRCH') {
+      // Process doesn't exist - consider this a success (already terminated)
+      return {
+        success: true,
+        signal,
+        terminated: true,
+        error: 'Process not found (already terminated)'
+      };
+    }
+
+    if (nodeError.code === 'EPERM') {
+      // Permission denied - we can't kill this process
+      return {
+        success: false,
+        signal,
+        error: `Permission denied to kill process ${pid}`
+      };
+    }
+
+    // Generic error
+    return {
+      success: false,
+      signal,
+      error: `Failed to kill process ${pid}: ${errorMessage}`
+    };
+  }
+}
+
+/**
  * Spawn a detached agent process that survives GUI restart
  *
  * This function creates a fully independent process that:
