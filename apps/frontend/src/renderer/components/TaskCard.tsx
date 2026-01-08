@@ -55,7 +55,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
 
   // Get dependency names for blocked tasks
   // Uses depends_on field (when available) or falls back to metadata.dependencies
-  const blockedByDependencies = (task as { depends_on?: string[] }).depends_on || task.metadata?.dependencies || [];
+  const blockedByDependencies = task.depends_on || task.metadata?.dependencies || [];
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);

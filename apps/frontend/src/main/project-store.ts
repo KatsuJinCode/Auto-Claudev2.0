@@ -405,6 +405,21 @@ export class ProjectStore {
           }
         }
 
+        // Read depends_on from requirements.json (spec-level dependencies)
+        let depends_on: string[] | undefined;
+        const requirementsForDepsPath = path.join(specPath, AUTO_BUILD_PATHS.REQUIREMENTS);
+        if (existsSync(requirementsForDepsPath)) {
+          try {
+            const reqContent = readFileSync(requirementsForDepsPath, 'utf-8');
+            const requirements = JSON.parse(reqContent);
+            if (requirements.depends_on && Array.isArray(requirements.depends_on)) {
+              depends_on = requirements.depends_on;
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+
         // Determine task status and review reason from plan
         const { status, reviewReason } = this.determineTaskStatusAndReason(plan, specPath, metadata);
 
@@ -459,6 +474,7 @@ export class ProjectStore {
           stagedAt,
           location, // Add location metadata (main vs worktree)
           specsPath: specPath, // Add full path to specs directory
+          depends_on, // Spec-level dependencies from requirements.json
           createdAt: new Date(plan?.created_at || Date.now()),
           updatedAt: new Date(plan?.updated_at || Date.now())
         });
