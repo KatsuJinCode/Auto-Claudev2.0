@@ -85,6 +85,7 @@ def create_spec(
     files_to_reference: list[str] | None = None,
     workflow_type: str = "feature",
     chunks: list[str] | None = None,
+    depends_on: list[str] | None = None,
 ) -> str:
     """Create all spec files and return the spec directory path."""
 
@@ -104,6 +105,7 @@ def create_spec(
     files_to_create = files_to_create or []
     files_to_modify = files_to_modify or []
     files_to_reference = files_to_reference or []
+    depends_on = depends_on or []
 
     # Default chunks if none provided
     if not chunks:
@@ -116,6 +118,8 @@ def create_spec(
         "services_involved": [name.replace("-", "_")],
         "created_at": timestamp,
     }
+    if depends_on:
+        requirements["depends_on"] = depends_on
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # 2. context.json
@@ -184,6 +188,8 @@ def create_spec(
         "planStatus": "approved",
         "updated_at": timestamp,
     }
+    if depends_on:
+        implementation_plan["depends_on"] = depends_on
     (spec_dir / "implementation_plan.json").write_text(
         json.dumps(implementation_plan, indent=2)
     )
@@ -206,6 +212,7 @@ def create_spec_from_json(
     project_dir: str,
     name: str,
     json_path: str,
+    depends_on: list[str] | None = None,
 ) -> str:
     """Create a multi-phase spec from a JSON definition file.
 
@@ -261,6 +268,7 @@ def create_spec_from_json(
 
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    depends_on = depends_on or []
 
     # 1. requirements.json
     requirements = {
@@ -269,6 +277,8 @@ def create_spec_from_json(
         "services_involved": [name.replace("-", "_")],
         "created_at": timestamp,
     }
+    if depends_on:
+        requirements["depends_on"] = depends_on
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # 2. context.json - collect all files from all phases
@@ -367,6 +377,8 @@ def create_spec_from_json(
         "planStatus": "approved",
         "updated_at": timestamp,
     }
+    if depends_on:
+        implementation_plan["depends_on"] = depends_on
     (spec_dir / "implementation_plan.json").write_text(
         json.dumps(implementation_plan, indent=2)
     )
@@ -470,6 +482,7 @@ def main():
                 project_dir=args.project_dir,
                 name=args.name,
                 json_path=args.from_json,
+                depends_on=depends_on or None,
             )
             print(f"Created multi-phase spec: {spec_dir}")
         else:
@@ -489,6 +502,7 @@ def main():
                 files_to_reference=files_to_reference,
                 workflow_type=args.workflow_type,
                 chunks=chunks or None,
+                depends_on=depends_on or None,
             )
             print(f"Created spec: {spec_dir}")
         print("Refresh the GUI to see the new spec.")
