@@ -4,7 +4,7 @@ import type { IPCResult, TaskStartOptions, TaskStatus, AgentType } from '../../.
 import path from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { spawnSync } from 'child_process';
-import { AgentManager } from '../../agent';
+import { AgentManager, getAgentRegistry } from '../../agent';
 import { fileWatcher } from '../../file-watcher';
 import { findTaskAndProject } from './shared';
 import { checkGitStatus } from '../../project-initializer';
@@ -616,22 +616,59 @@ export function registerTaskExecutionHandlers(
   /**
    * Check if a task is actually running (has active process)
    *
-   * This checks both:
+   * This performs comprehensive validation with three checks:
    * 1. In-memory process map (for processes spawned by this GUI instance)
-   * 2. .auto-claude-status file (for processes that survived GUI restart or were started externally)
+   * 2. Agent registry with PID+executionId validation (for detached agents that survived GUI restart)
+   * 3. .auto-claude-status file (for processes started externally/terminal)
+   *
+   * The registry check uses dual validation (PID alive + executionId match) to prevent
+   * false positives from recycled PIDs where a new process reuses a dead agent's PID.
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_CHECK_RUNNING,
     async (_, taskId: string): Promise<IPCResult<boolean>> => {
-      // Fast path: check in-memory process map first
+      // Fast path: check in-memory process map first (locally spawned processes)
       if (agentManager.isRunning(taskId)) {
         return { success: true, data: true };
       }
 
-      // Slow path: check .auto-claude-status file in case the backend is still running
+      // Check reconnected agents (detached processes we're monitoring after GUI restart)
+      if (agentManager.isReconnected(taskId)) {
+        return { success: true, data: true };
+      }
+
+      // Find task to get specId for registry lookup
+      const { task, project } = findTaskAndProject(taskId);
+
+      // Check agent registry with full PID+executionId validation
+      // This handles detached agents that survived GUI restart
+      if (task) {
+        try {
+          const registry = getAgentRegistry();
+          const entry = registry.get(task.specId);
+
+          if (entry && entry.status === 'running') {
+            // Perform full validation: PID must be alive AND executionId must match lockfile
+            // This prevents false positives from PID reuse (where a new process gets
+            // the same PID as a dead agent, but won't have our executionId in its lockfile)
+            const validation = registry.isAgentAlive(task.specId);
+
+            if (validation.alive) {
+              // Agent is confirmed running with valid executionId
+              return { success: true, data: true };
+            }
+            // If validation failed, the agent is stale - don't report as running
+            // The registry entry will be cleaned up on next discovery
+          }
+        } catch {
+          // Ignore registry errors, continue to fallback checks
+        }
+      }
+
+      // Fallback: check .auto-claude-status file in case the backend is still running
       // but the GUI was restarted (or the task was started from terminal)
+      // This provides backward compatibility with non-detached processes
       try {
-        const { task, project } = findTaskAndProject(taskId);
         if (task && project) {
           const statusFilePath = path.join(project.path, '.auto-claude-status');
           if (existsSync(statusFilePath)) {
