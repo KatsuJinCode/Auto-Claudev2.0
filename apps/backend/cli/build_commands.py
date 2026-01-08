@@ -48,6 +48,10 @@ from .input_handlers import (
     read_multiline_input,
 )
 
+# Agent availability validation imports (lazy-loaded pattern would be overkill here)
+from config import get_project_agent
+from core.agent_runner import get_installed_agents, validate_agent_available
+
 
 def handle_build_command(
     project_dir: Path,
@@ -102,8 +106,31 @@ def handle_build_command(
     qa_model = get_phase_model(spec_dir, "qa", model)
 
     print_banner()
+
+    # Resolve and validate agent type early to fail fast with helpful error
+    resolved_agent = get_project_agent(project_dir, agent_type)
+    agent_available, agent_error = validate_agent_available(resolved_agent)
+    if not agent_available:
+        print()
+        content = [
+            bold(f"{icon(Icons.ERROR)} AGENT NOT AVAILABLE"),
+            "",
+            warning(f"The '{resolved_agent}' agent CLI is not installed."),
+            "",
+            *agent_error.split("\n"),  # Split error message into lines
+            "",
+            highlight("Available agents:"),
+            f"  {', '.join(get_installed_agents()) or 'None installed'}",
+            "",
+            muted("Use --agent <name> to select a different agent."),
+        ]
+        print(box(content, width=70, style="heavy"))
+        print()
+        sys.exit(1)
+
     print(f"\nProject directory: {project_dir}")
     print(f"Spec: {spec_dir.name}")
+    print(f"Agent: {resolved_agent}")
     # Show phase-specific models if they differ
     if planning_model != coding_model or coding_model != qa_model:
         print(
