@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """
-CLI tool to add specs to Auto-Claude GUI.
+IMPORT PRE-BUILT SPECS - BYPASSES THE SPEC CREATION PIPELINE
 
-Creates all required spec files so the spec appears in the GUI.
+WARNING: This tool creates spec.md and full implementation_plan.json,
+which means the AI spec creation pipeline will NOT run when you start the task.
+
+Use this ONLY when:
+- Importing specs from another project
+- You have a pre-written spec you want to use
+- You explicitly want to skip the Discovery/Requirements/Context/Planning phases
+
+For normal task creation that runs the full pipeline, use:
+    python create_task.py --project-dir /path --description "What to build"
+
+---
 
 Usage:
     # Simple single-phase spec:
