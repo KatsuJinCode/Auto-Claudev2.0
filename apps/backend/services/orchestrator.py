@@ -216,7 +216,8 @@ class ServiceOrchestrator:
                         self._services.append(
                             ServiceConfig(
                                 name=item.name,
-                                path=str(item.relative_to(self.project_dir)),
+                                # Use as_posix() for consistent forward slashes
+                                path=item.relative_to(self.project_dir).as_posix(),
                                 type="local",
                             )
                         )

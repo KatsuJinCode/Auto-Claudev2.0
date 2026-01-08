@@ -122,7 +122,8 @@ class EvolutionStorage:
         with open(baseline_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-        return str(baseline_path.relative_to(self.storage_dir))
+        # Use as_posix() for consistent forward slashes across platforms
+        return baseline_path.relative_to(self.storage_dir).as_posix()
 
     def read_baseline_content(self, baseline_snapshot_path: str) -> str | None:
         """
@@ -180,8 +181,9 @@ class EvolutionStorage:
             try:
                 # Resolve both paths to handle symlinks (e.g., /var -> /private/var on macOS)
                 resolved_path = path.resolve()
-                return str(resolved_path.relative_to(self.project_dir))
+                # Use as_posix() for consistent forward slashes across platforms
+                return resolved_path.relative_to(self.project_dir).as_posix()
             except ValueError:
                 # Path is not under project_dir, return as-is
-                return str(path)
-        return str(path)
+                return path.as_posix()
+        return path.as_posix()
