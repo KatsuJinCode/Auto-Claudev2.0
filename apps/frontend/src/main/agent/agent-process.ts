@@ -1,4 +1,4 @@
-import { spawn, ChildProcess, SpawnOptions, StdioOptions } from 'child_process';
+import { spawn, execSync, ChildProcess, SpawnOptions, StdioOptions } from 'child_process';
 import path from 'path';
 import * as fs from 'fs';
 import { existsSync, readFileSync } from 'fs';
@@ -96,6 +96,45 @@ export interface KillAgentResult {
   signal: NodeJS.Signals | 'SIGBREAK';
   /** Whether the process is confirmed terminated */
   terminated?: boolean;
+}
+
+/**
+ * Options for force killing an agent process
+ */
+export interface ForceKillOptions {
+  /**
+   * Whether to attempt graceful shutdown first before force kill
+   * If true, sends SIGTERM/SIGBREAK first, then waits for timeout before SIGKILL/taskkill
+   * Defaults to true
+   */
+  gracefulFirst?: boolean;
+  /**
+   * Timeout in milliseconds to wait for graceful shutdown before force kill
+   * Only used when gracefulFirst is true
+   * Defaults to 5000 (5 seconds)
+   */
+  gracefulTimeout?: number;
+  /**
+   * Interval in milliseconds to poll for process exit during graceful wait
+   * Defaults to 100
+   */
+  pollInterval?: number;
+}
+
+/**
+ * Result from attempting to force kill an agent process
+ */
+export interface ForceKillAgentResult {
+  /** Whether the process was successfully terminated */
+  success: boolean;
+  /** Error message if the kill failed */
+  error?: string;
+  /** Method used to terminate: 'graceful' if process exited during graceful wait, 'force' if SIGKILL/taskkill was needed */
+  method: 'graceful' | 'force' | 'already_dead';
+  /** Whether the process is confirmed terminated */
+  terminated: boolean;
+  /** Time in milliseconds it took to terminate the process */
+  elapsedMs?: number;
 }
 
 /**
@@ -200,6 +239,222 @@ export function killAgentProcess(pid: number): KillAgentResult {
       success: false,
       signal,
       error: `Failed to kill process ${pid}: ${errorMessage}`
+    };
+  }
+}
+
+/**
+ * Wait for a process to exit, polling at regular intervals
+ *
+ * @param pid - The process ID to wait for
+ * @param timeoutMs - Maximum time to wait in milliseconds
+ * @param pollIntervalMs - How often to check if process is still running
+ * @returns true if process exited within timeout, false if still running
+ */
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs: number,
+  pollIntervalMs: number
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    if (!isProcessRunning(pid)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  // Final check after timeout
+  return !isProcessRunning(pid);
+}
+
+/**
+ * Force kill a process on Windows using taskkill /F
+ *
+ * This is more reliable than SIGKILL on Windows for forcefully terminating processes.
+ * The /F flag forces termination, and /T also kills child processes.
+ *
+ * @param pid - The process ID to terminate
+ * @returns Object with success status and any error message
+ */
+function windowsForceKill(pid: number): { success: boolean; error?: string } {
+  try {
+    // Use taskkill with /F (force) and /T (terminate child processes)
+    // /PID specifies the process ID to terminate
+    // Suppress output by redirecting to nul, errors will still throw
+    execSync(`taskkill /F /T /PID ${pid}`, {
+      stdio: 'pipe', // Capture output to prevent it from appearing in console
+      windowsHide: true // Don't show a command window
+    });
+    return { success: true };
+  } catch (error: unknown) {
+    // taskkill returns exit code 128 when process not found, which is fine
+    // It also throws when process doesn't exist, which we treat as success
+    const execError = error as { status?: number; message?: string; stderr?: Buffer };
+
+    // Check if the error is because process doesn't exist
+    const stderr = execError.stderr?.toString() || '';
+    if (
+      execError.status === 128 ||
+      stderr.includes('not found') ||
+      stderr.includes('ERROR: The process') ||
+      stderr.includes('ERROR: No tasks running')
+    ) {
+      // Process already terminated - this is fine
+      return { success: true };
+    }
+
+    // Actual error
+    const errorMessage = execError.message || String(error);
+    return {
+      success: false,
+      error: `taskkill failed: ${errorMessage}`
+    };
+  }
+}
+
+/**
+ * Force kill a detached agent process using platform-specific forceful termination
+ *
+ * This function provides a more aggressive way to terminate processes that don't
+ * respond to graceful shutdown signals (SIGTERM/SIGBREAK):
+ *
+ * - On Unix: Uses SIGKILL which cannot be caught, blocked, or ignored
+ * - On Windows: Uses `taskkill /F /T /PID` which forcefully terminates the process
+ *   and any child processes
+ *
+ * Options:
+ * - gracefulFirst: If true (default), attempts graceful shutdown first, then waits
+ *   for gracefulTimeout before force killing
+ * - gracefulTimeout: Time in ms to wait for graceful shutdown (default: 5000ms)
+ *
+ * @param pid - The process ID of the agent to force kill
+ * @param options - Configuration options for the force kill
+ * @returns Promise resolving to result indicating success and method used
+ *
+ * @example
+ * // Immediate force kill without waiting
+ * const result = await forceKillAgentProcess(12345, { gracefulFirst: false });
+ *
+ * @example
+ * // Graceful first with 3 second timeout, then force kill
+ * const result = await forceKillAgentProcess(12345, { gracefulTimeout: 3000 });
+ */
+export async function forceKillAgentProcess(
+  pid: number,
+  options: ForceKillOptions = {}
+): Promise<ForceKillAgentResult> {
+  const { gracefulFirst = true, gracefulTimeout = 5000, pollInterval = 100 } = options;
+
+  const startTime = Date.now();
+  const isWindows = process.platform === 'win32';
+
+  // Check if process is already dead
+  if (!isProcessRunning(pid)) {
+    return {
+      success: true,
+      method: 'already_dead',
+      terminated: true,
+      elapsedMs: Date.now() - startTime
+    };
+  }
+
+  // Attempt graceful shutdown first if requested
+  if (gracefulFirst) {
+    const gracefulResult = killAgentProcess(pid);
+
+    // If process was already dead or error occurred, check current state
+    if (gracefulResult.terminated) {
+      return {
+        success: true,
+        method: 'already_dead',
+        terminated: true,
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    if (gracefulResult.success) {
+      // Wait for process to exit gracefully
+      const exitedGracefully = await waitForProcessExit(pid, gracefulTimeout, pollInterval);
+
+      if (exitedGracefully) {
+        return {
+          success: true,
+          method: 'graceful',
+          terminated: true,
+          elapsedMs: Date.now() - startTime
+        };
+      }
+      // Process didn't exit gracefully, continue to force kill
+    }
+    // If graceful signal failed, still try force kill
+  }
+
+  // Force kill the process
+  try {
+    if (isWindows) {
+      // Use taskkill on Windows for reliable force termination
+      const result = windowsForceKill(pid);
+
+      if (!result.success) {
+        return {
+          success: false,
+          method: 'force',
+          terminated: false,
+          error: result.error,
+          elapsedMs: Date.now() - startTime
+        };
+      }
+    } else {
+      // Use SIGKILL on Unix - cannot be caught or ignored
+      process.kill(pid, 'SIGKILL');
+    }
+
+    // Brief wait to confirm termination (SIGKILL and taskkill are usually immediate)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Verify process is dead
+    const isDead = !isProcessRunning(pid);
+
+    return {
+      success: isDead,
+      method: 'force',
+      terminated: isDead,
+      error: isDead ? undefined : 'Process did not terminate after force kill',
+      elapsedMs: Date.now() - startTime
+    };
+  } catch (error: unknown) {
+    const nodeError = error as NodeJS.ErrnoException;
+    const errorMessage = nodeError.message || String(error);
+
+    // ESRCH means process doesn't exist - success
+    if (nodeError.code === 'ESRCH') {
+      return {
+        success: true,
+        method: 'force',
+        terminated: true,
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    // EPERM means permission denied
+    if (nodeError.code === 'EPERM') {
+      return {
+        success: false,
+        method: 'force',
+        terminated: false,
+        error: `Permission denied to force kill process ${pid}`,
+        elapsedMs: Date.now() - startTime
+      };
+    }
+
+    return {
+      success: false,
+      method: 'force',
+      terminated: false,
+      error: `Failed to force kill process ${pid}: ${errorMessage}`,
+      elapsedMs: Date.now() - startTime
     };
   }
 }

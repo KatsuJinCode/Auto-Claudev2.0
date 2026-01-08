@@ -14,7 +14,7 @@
 export { AgentManager } from './agent-manager';
 export { AgentState } from './agent-state';
 export { AgentEvents } from './agent-events';
-export { AgentProcessManager, killAgentProcess, isProcessRunning } from './agent-process';
+export { AgentProcessManager, killAgentProcess, forceKillAgentProcess, isProcessRunning } from './agent-process';
 export { AgentQueueManager } from './agent-queue';
 export { AgentRegistry, getAgentRegistry, resetAgentRegistry } from './agent-registry';
 export { FileOutputStreamer, createFileOutputStreamer } from './file-output-streamer';
@@ -47,7 +47,7 @@ export type {
   FileOutputStreamerEvents
 } from './file-output-streamer';
 
-export type { KillAgentResult } from './agent-process';
+export type { KillAgentResult, ForceKillOptions, ForceKillAgentResult } from './agent-process';
 
 // Re-export IdeationConfig from shared types for consistency
 export type { IdeationConfig } from '../../shared/types';
