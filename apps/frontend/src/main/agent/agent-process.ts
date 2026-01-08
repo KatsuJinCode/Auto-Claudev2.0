@@ -15,10 +15,33 @@ import { findPythonCommand, parsePythonCommand } from '../python-detector';
 import { ensureDir } from '../fs-utils';
 
 /**
+ * Get the default output file path for an agent
+ *
+ * Output files are stored at: .auto-claude/agent-output/{specId}.log
+ *
+ * @param cwd - The working directory (project root)
+ * @param specId - The spec ID for the agent
+ * @returns Full path to the output log file
+ */
+export function getAgentOutputFilePath(cwd: string, specId: string): string {
+  return path.join(cwd, '.auto-claude', 'agent-output', `${specId}.log`);
+}
+
+/**
+ * Get the output directory path for all agent output files
+ *
+ * @param cwd - The working directory (project root)
+ * @returns Full path to the agent output directory
+ */
+export function getAgentOutputDir(cwd: string): string {
+  return path.join(cwd, '.auto-claude', 'agent-output');
+}
+
+/**
  * Options for spawning a detached agent process
  */
 export interface SpawnAgentOptions {
-  /** Spec ID - used for lockfile naming and registry tracking */
+  /** Spec ID - used for lockfile naming, output file, and registry tracking */
   specId: string;
   /** Command to execute */
   command: string;
@@ -28,8 +51,12 @@ export interface SpawnAgentOptions {
   cwd: string;
   /** Environment variables to pass to the process */
   env?: Record<string, string>;
-  /** Path to the output file for stdout/stderr (optional - if not provided, stdio is inherited) */
-  outputFile?: string;
+  /**
+   * Path to the output file for stdout/stderr
+   * If not provided, defaults to .auto-claude/agent-output/{specId}.log
+   * Set to null to disable file output (stdio will be ignored)
+   */
+  outputFile?: string | null;
 }
 
 /**
@@ -64,7 +91,23 @@ export interface SpawnAgentResult {
  * @throws Error if the process fails to spawn or has no PID
  */
 export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult {
-  const { specId, command, args, cwd, env = {}, outputFile } = options;
+  const { specId, command, args, cwd, env = {} } = options;
+
+  // Determine output file path:
+  // - If explicitly provided as string, use that path
+  // - If undefined (not provided), auto-generate at .auto-claude/agent-output/{specId}.log
+  // - If null, disable file output (stdio will be ignored)
+  let outputFile: string | undefined;
+  if (options.outputFile === null) {
+    // Explicitly disabled - no output file
+    outputFile = undefined;
+  } else if (options.outputFile !== undefined) {
+    // Custom path provided
+    outputFile = options.outputFile;
+  } else {
+    // Auto-generate default path using helper function
+    outputFile = getAgentOutputFilePath(cwd, specId);
+  }
 
   // Generate unique execution ID (UUID) for PID reuse protection
   // This ID is written to a lockfile and validated on reconnection
@@ -123,26 +166,45 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
   if (outputFile) {
     // Open file for writing with shared read access
     // This allows the GUI to read the file while the agent writes to it
-    // Using flags: O_WRONLY | O_CREAT | O_TRUNC for write-only, create if not exists, truncate
-    // On Windows, we need to be careful about file sharing
+    //
+    // On Windows, file sharing is critical to avoid EBUSY errors:
+    // - Using explicit flags: O_WRONLY | O_CREAT | O_TRUNC
+    // - Node.js on Windows uses FILE_SHARE_READ | FILE_SHARE_WRITE by default
+    //   which allows other processes to read while we write
+    // - The reader (GUI) must also open with read-only flags to avoid conflicts
+    //
+    // On Unix, file sharing is more permissive by default
     try {
-      // Ensure directory exists
+      // Ensure output directory exists (e.g., .auto-claude/agent-output/)
       const outputDir = path.dirname(outputFile);
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
+      if (!ensureDir(outputDir)) {
+        throw new Error(`Failed to create output directory: ${outputDir}`);
       }
 
-      // Open file with write permissions
-      // Using 'w' flag which is O_WRONLY | O_CREAT | O_TRUNC
-      outputFd = fs.openSync(outputFile, 'w');
+      // Open file with explicit flags for shared access:
+      // - O_WRONLY: Write-only access
+      // - O_CREAT: Create file if it doesn't exist
+      // - O_TRUNC: Truncate file to zero length if it exists
+      // This combination allows the GUI to read the file while the agent writes
+      const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC;
+
+      // Mode 0o666: rw-rw-rw- (modified by umask on Unix)
+      // On Windows, mode is largely ignored but we specify it for consistency
+      outputFd = fs.openSync(outputFile, flags, 0o666);
 
       // Set up stdio: [stdin, stdout, stderr]
       // stdin: ignore (no input needed)
       // stdout: write to file
-      // stderr: write to same file (merged output)
+      // stderr: write to same file (merged output for unified logging)
       stdio = ['ignore', outputFd, outputFd];
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      // Clean up lockfile on output file error
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {
+        // Ignore lockfile cleanup errors
+      }
       throw new Error(`Failed to open output file ${outputFile}: ${errorMessage}`);
     }
   } else {
