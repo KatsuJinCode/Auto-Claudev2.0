@@ -1,5 +1,6 @@
-import { spawn } from 'child_process';
+import { spawn, ChildProcess, SpawnOptions, StdioOptions } from 'child_process';
 import path from 'path';
+import * as fs from 'fs';
 import { existsSync, readFileSync } from 'fs';
 import { app } from 'electron';
 import { EventEmitter } from 'events';
@@ -10,6 +11,136 @@ import { detectRateLimit, createSDKRateLimitInfo, getProfileEnv, detectAuthFailu
 import { projectStore } from '../project-store';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { findPythonCommand, parsePythonCommand } from '../python-detector';
+
+/**
+ * Options for spawning a detached agent process
+ */
+export interface SpawnAgentOptions {
+  /** Command to execute */
+  command: string;
+  /** Arguments for the command */
+  args: string[];
+  /** Working directory for the process */
+  cwd: string;
+  /** Environment variables to pass to the process */
+  env?: Record<string, string>;
+  /** Path to the output file for stdout/stderr (optional - if not provided, stdio is inherited) */
+  outputFile?: string;
+}
+
+/**
+ * Result from spawning a detached agent process
+ */
+export interface SpawnAgentResult {
+  /** The spawned child process */
+  process: ChildProcess;
+  /** Process ID of the spawned process */
+  pid: number;
+  /** Path to the output file (if using file output) */
+  outputFile?: string;
+}
+
+/**
+ * Spawn a detached agent process that survives GUI restart
+ *
+ * This function creates a fully independent process that:
+ * - Continues running after the parent process exits (detached: true)
+ * - Doesn't show a console window on Windows (windowsHide: true)
+ * - Writes output to a file for later reading (when outputFile is provided)
+ *
+ * Important: After spawning, call child.unref() to allow the parent
+ * to exit without waiting for the child process.
+ *
+ * @param options - Configuration for the spawned process
+ * @returns The spawned process and its PID
+ * @throws Error if the process fails to spawn or has no PID
+ */
+export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult {
+  const { command, args, cwd, env = {}, outputFile } = options;
+
+  // Determine platform-specific spawn options
+  const isWindows = process.platform === 'win32';
+
+  // Build environment variables
+  const spawnEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...env,
+    // Ensure Python output is unbuffered for real-time logging
+    PYTHONUNBUFFERED: '1',
+    // Ensure UTF-8 encoding on Windows
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUTF8: '1'
+  };
+
+  // Configure stdio based on whether we have an output file
+  let stdio: StdioOptions;
+  let outputFd: number | undefined;
+
+  if (outputFile) {
+    // Open file for writing with shared read access
+    // This allows the GUI to read the file while the agent writes to it
+    // Using flags: O_WRONLY | O_CREAT | O_TRUNC for write-only, create if not exists, truncate
+    // On Windows, we need to be careful about file sharing
+    try {
+      // Ensure directory exists
+      const outputDir = path.dirname(outputFile);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+
+      // Open file with write permissions
+      // Using 'w' flag which is O_WRONLY | O_CREAT | O_TRUNC
+      outputFd = fs.openSync(outputFile, 'w');
+
+      // Set up stdio: [stdin, stdout, stderr]
+      // stdin: ignore (no input needed)
+      // stdout: write to file
+      // stderr: write to same file (merged output)
+      stdio = ['ignore', outputFd, outputFd];
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to open output file ${outputFile}: ${errorMessage}`);
+    }
+  } else {
+    // No output file - use 'ignore' for all stdio to fully detach
+    // The process should write its own logs if needed
+    stdio = ['ignore', 'ignore', 'ignore'];
+  }
+
+  // Spawn options for detached process
+  const spawnOptions: SpawnOptions = {
+    cwd,
+    env: spawnEnv,
+    // Detach the process so it continues running after parent exits
+    detached: true,
+    // Hide console window on Windows
+    windowsHide: isWindows,
+    // Configure stdio for file output or ignore
+    stdio
+  };
+
+  // Spawn the detached process
+  const childProcess = spawn(command, args, spawnOptions);
+
+  // Verify we got a valid PID
+  if (childProcess.pid === undefined) {
+    // Clean up file descriptor if we opened one
+    if (outputFd !== undefined) {
+      try {
+        fs.closeSync(outputFd);
+      } catch {
+        // Ignore close errors
+      }
+    }
+    throw new Error('Failed to spawn agent process: no PID returned');
+  }
+
+  return {
+    process: childProcess,
+    pid: childProcess.pid,
+    outputFile
+  };
+}
 
 /**
  * Process spawning and lifecycle management
