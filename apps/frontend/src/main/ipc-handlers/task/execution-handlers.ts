@@ -567,12 +567,50 @@ export function registerTaskExecutionHandlers(
 
   /**
    * Check if a task is actually running (has active process)
+   *
+   * This checks both:
+   * 1. In-memory process map (for processes spawned by this GUI instance)
+   * 2. .auto-claude-status file (for processes that survived GUI restart or were started externally)
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_CHECK_RUNNING,
     async (_, taskId: string): Promise<IPCResult<boolean>> => {
-      const isRunning = agentManager.isRunning(taskId);
-      return { success: true, data: isRunning };
+      // Fast path: check in-memory process map first
+      if (agentManager.isRunning(taskId)) {
+        return { success: true, data: true };
+      }
+
+      // Slow path: check .auto-claude-status file in case the backend is still running
+      // but the GUI was restarted (or the task was started from terminal)
+      try {
+        const { task, project } = findTaskAndProject(taskId);
+        if (task && project) {
+          const statusFilePath = path.join(project.path, '.auto-claude-status');
+          if (existsSync(statusFilePath)) {
+            const statusContent = readFileSync(statusFilePath, 'utf-8');
+            const statusData = JSON.parse(statusContent);
+
+            // Check if the status file indicates this specific task is running
+            if (statusData.active === true && statusData.spec === task.specId) {
+              // Verify last_update is recent (within 60 seconds) to handle crashed backends
+              if (statusData.last_update) {
+                const lastUpdate = new Date(statusData.last_update);
+                const now = new Date();
+                const ageMs = now.getTime() - lastUpdate.getTime();
+
+                if (ageMs < 60000) {
+                  // Status file is recent and shows this task is active
+                  return { success: true, data: true };
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore errors reading status file, fall through to return false
+      }
+
+      return { success: true, data: false };
     }
   );
 
