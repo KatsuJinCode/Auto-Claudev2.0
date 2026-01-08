@@ -1,12 +1,12 @@
 import { EventEmitter } from 'events';
 import path from 'path';
-import * as fs from 'fs';
-import { existsSync, watchFile, unwatchFile, statSync, openSync, readSync, closeSync } from 'fs';
+import { existsSync } from 'fs';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
 import { AgentQueueManager } from './agent-queue';
 import { getAgentRegistry, AgentRegistryEntry } from './agent-registry';
+import { FileOutputStreamer, createFileOutputStreamer } from './file-output-streamer';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import {
   SpecCreationMetadata,
@@ -70,10 +70,8 @@ interface ReconnectedAgent {
   entry: AgentRegistryEntry;
   /** Task ID used for events */
   taskId: string;
-  /** Current read position in the output file */
-  readPosition: number;
-  /** fs.watchFile interval reference */
-  watchActive: boolean;
+  /** FileOutputStreamer instance for tailing the output file */
+  streamer: FileOutputStreamer;
   /** PID check interval */
   pidCheckInterval?: ReturnType<typeof setInterval>;
 }
@@ -457,7 +455,7 @@ export class AgentManager extends EventEmitter {
    * This method enables the GUI to reconnect to agents that were running
    * when the GUI was closed/restarted. It:
    * 1. Validates the agent is still running (PID + executionId check)
-   * 2. Starts tailing the output file for new content
+   * 2. Starts tailing the output file using FileOutputStreamer
    * 3. Monitors the process to detect completion/failure
    * 4. Emits events to the renderer for UI updates
    *
@@ -502,16 +500,40 @@ export class AgentManager extends EventEmitter {
       };
     }
 
-    // Get initial file position
-    let readPosition = 0;
+    // Create FileOutputStreamer for tailing the output file
+    const streamer = createFileOutputStreamer();
+
+    // Wire up event handlers for the streamer
+    streamer.on('line', (line: string) => {
+      // Emit log events for each line
+      this.emit('log', taskId, line + '\n');
+      // Parse for progress updates
+      this.parseOutputForProgress(taskId, line);
+    });
+
+    streamer.on('data', (chunk: string) => {
+      // Raw data event can be used for debugging or alternative processing
+      // Currently we rely on line events for cleaner output
+    });
+
+    streamer.on('error', (error: Error) => {
+      // Log streamer errors but don't stop monitoring
+      // Temporary errors (EBUSY, EAGAIN) are already handled by FileOutputStreamer
+      console.warn(`[AgentManager] FileOutputStreamer error for ${taskId}: ${error.message}`);
+    });
+
+    // Try to start the streamer
     try {
-      const stats = statSync(entry.outputFile);
-      readPosition = seekToEnd ? stats.size : 0;
+      streamer.start(entry.outputFile, {
+        seekToEnd,
+        watchMode: 'watchFile', // More reliable cross-platform
+        pollInterval: 500 // Balance between responsiveness and CPU usage
+      });
     } catch (error) {
       return {
         success: false,
         taskId,
-        error: `Failed to stat output file: ${error instanceof Error ? error.message : String(error)}`
+        error: `Failed to start file streaming: ${error instanceof Error ? error.message : String(error)}`
       };
     }
 
@@ -519,8 +541,7 @@ export class AgentManager extends EventEmitter {
     const reconnectedAgent: ReconnectedAgent = {
       entry,
       taskId,
-      readPosition,
-      watchActive: true
+      streamer
     };
 
     this.reconnectedAgents.set(taskId, reconnectedAgent);
@@ -532,13 +553,6 @@ export class AgentManager extends EventEmitter {
       overallProgress: 50,
       message: 'Reconnected to running agent'
     });
-
-    // Start file tailing using fs.watchFile
-    // We use watchFile instead of fs.watch because:
-    // - watchFile is more reliable across platforms
-    // - fs.watch can have issues with file modifications on Windows
-    // - watchFile uses polling which works well for log files
-    this.startFileTailing(reconnectedAgent);
 
     // Start PID monitoring to detect when process exits
     this.startPidMonitoring(reconnectedAgent);
@@ -564,14 +578,9 @@ export class AgentManager extends EventEmitter {
       return false;
     }
 
-    // Stop file tailing
-    if (agent.watchActive) {
-      try {
-        unwatchFile(agent.entry.outputFile);
-      } catch {
-        // Ignore unwatch errors
-      }
-      agent.watchActive = false;
+    // Stop file streaming using FileOutputStreamer
+    if (agent.streamer.getIsActive()) {
+      agent.streamer.stop();
     }
 
     // Stop PID monitoring
@@ -599,74 +608,6 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
-   * Start tailing the output file for new content
-   */
-  private startFileTailing(agent: ReconnectedAgent): void {
-    const { entry, taskId } = agent;
-
-    // Listener for file changes
-    const onFileChange = (curr: fs.Stats, prev: fs.Stats) => {
-      // Check if file has grown
-      if (curr.size > agent.readPosition) {
-        this.readNewContent(agent);
-      }
-    };
-
-    // Start watching with polling interval
-    // 500ms is a good balance between responsiveness and CPU usage
-    watchFile(entry.outputFile, { interval: 500 }, onFileChange);
-  }
-
-  /**
-   * Read new content from the output file since last read position
-   */
-  private readNewContent(agent: ReconnectedAgent): void {
-    const { entry, taskId, readPosition } = agent;
-
-    try {
-      const stats = statSync(entry.outputFile);
-      const newSize = stats.size;
-
-      if (newSize <= readPosition) {
-        return; // No new content
-      }
-
-      // Open file with read-only flags for shared access
-      // This allows the agent process to continue writing while we read
-      const fd = openSync(entry.outputFile, 'r');
-
-      try {
-        const bytesToRead = newSize - readPosition;
-        const buffer = Buffer.alloc(bytesToRead);
-
-        // Read from the current position
-        const bytesRead = readSync(fd, buffer, 0, bytesToRead, readPosition);
-
-        if (bytesRead > 0) {
-          const newContent = buffer.toString('utf8', 0, bytesRead);
-          agent.readPosition = readPosition + bytesRead;
-
-          // Emit log events line by line (or as chunks)
-          this.emit('log', taskId, newContent);
-
-          // Parse for progress updates
-          this.parseOutputForProgress(taskId, newContent);
-        }
-      } finally {
-        closeSync(fd);
-      }
-    } catch (error) {
-      // File read error - could be temporary lock or file deleted
-      // Log but don't stop monitoring
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      // Avoid spamming console - only log if it's not a temporary read issue
-      if (!errorMessage.includes('EBUSY') && !errorMessage.includes('EAGAIN')) {
-        console.warn(`[AgentManager] Error reading output file for ${taskId}: ${errorMessage}`);
-      }
-    }
-  }
-
-  /**
    * Parse output content for progress information
    * This mirrors the logic in AgentProcessManager.spawnProcess
    */
@@ -689,7 +630,7 @@ export class AgentManager extends EventEmitter {
    * Start monitoring the agent's PID to detect when it exits
    */
   private startPidMonitoring(agent: ReconnectedAgent): void {
-    const { entry, taskId } = agent;
+    const { entry, taskId, streamer } = agent;
     const registry = getAgentRegistry();
 
     // Check PID every 2 seconds
@@ -697,8 +638,9 @@ export class AgentManager extends EventEmitter {
       const validation = registry.isAgentAlive(entry.specId);
 
       if (!validation.alive) {
-        // Agent has exited - read any remaining output
-        this.readNewContent(agent);
+        // Agent has exited - trigger a final read to capture any remaining output
+        // FileOutputStreamer.triggerRead() forces an immediate read of new content
+        streamer.triggerRead();
 
         // Determine exit status based on validation reason
         const isCompleted = validation.reason?.includes('not running') ?? false;
@@ -720,7 +662,7 @@ export class AgentManager extends EventEmitter {
 
         this.emit('exit', taskId, isCompleted ? 0 : 1, 'task-execution');
 
-        // Clean up monitoring
+        // Clean up monitoring (this also stops the streamer)
         this.disconnectFromAgent(taskId);
       }
     }, 2000);
