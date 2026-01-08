@@ -17,8 +17,6 @@ from progress import count_subtasks
 from spec.pipeline import list_all_specs_worktree_aware
 from workspace import get_existing_build_worktree
 
-from .utils import get_specs_dir
-
 
 def list_specs(project_dir: Path, dev_mode: bool = False) -> list[dict]:
     """

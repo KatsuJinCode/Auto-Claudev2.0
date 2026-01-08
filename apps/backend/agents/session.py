@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeSDKClient
+from claude_agent_sdk.types import ResultMessage
 from debug import debug, debug_detailed, debug_error, debug_section, debug_success
 from insight_extractor import extract_session_insights
 from linear_updater import (
@@ -316,7 +317,7 @@ async def run_agent_session(
     spec_dir: Path,
     verbose: bool = False,
     phase: LogPhase = LogPhase.CODING,
-) -> tuple[str, str]:
+) -> tuple[str, str, str | None]:
     """
     Run a single agent session using Claude Agent SDK.
 
@@ -328,10 +329,10 @@ async def run_agent_session(
         phase: Current execution phase for logging
 
     Returns:
-        (status, response_text) where status is:
-        - "continue" if agent should continue working
-        - "complete" if all subtasks complete
-        - "error" if an error occurred
+        (status, response_text, session_id) where:
+        - status is "continue", "complete", or "error"
+        - response_text is the full response text
+        - session_id is the Claude CLI session ID (for resume capability)
     """
     debug_section("session", f"Agent Session - {phase.value}")
     debug(
@@ -349,6 +350,7 @@ async def run_agent_session(
     current_tool = None
     message_count = 0
     tool_count = 0
+    session_id = None  # Will be captured from ResultMessage
 
     try:
         # Send the query
@@ -514,6 +516,16 @@ async def run_agent_session(
 
                         current_tool = None
 
+            # Handle ResultMessage (captures session_id for resume capability)
+            elif isinstance(msg, ResultMessage):
+                session_id = msg.session_id
+                debug(
+                    "session",
+                    f"Captured session ID: {session_id}",
+                    duration_ms=msg.duration_ms,
+                    num_turns=msg.num_turns,
+                )
+
         print("\n" + "-" * 70 + "\n")
 
         # Check if build is complete
@@ -524,8 +536,9 @@ async def run_agent_session(
                 message_count=message_count,
                 tool_count=tool_count,
                 response_length=len(response_text),
+                session_id=session_id,
             )
-            return "complete", response_text
+            return "complete", response_text, session_id
 
         debug_success(
             "session",
@@ -533,8 +546,9 @@ async def run_agent_session(
             message_count=message_count,
             tool_count=tool_count,
             response_length=len(response_text),
+            session_id=session_id,
         )
-        return "continue", response_text
+        return "continue", response_text, session_id
 
     except Exception as e:
         debug_error(
@@ -547,4 +561,4 @@ async def run_agent_session(
         print(f"Error during agent session: {e}")
         if task_logger:
             task_logger.log_error(f"Session error: {e}", phase)
-        return "error", str(e)
+        return "error", str(e), session_id

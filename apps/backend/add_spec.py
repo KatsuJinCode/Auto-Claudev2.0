@@ -46,7 +46,6 @@ phases.json format:
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -230,7 +229,7 @@ def create_spec_from_json(
     specs_dir.mkdir(parents=True, exist_ok=True)
 
     # Load JSON definition
-    with open(json_path, 'r') as f:
+    with open(json_path) as f:
         spec_def = json.load(f)
 
     description = spec_def.get("description", f"Implement {name}")

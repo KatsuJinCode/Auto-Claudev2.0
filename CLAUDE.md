@@ -253,3 +253,11 @@ npm run dev      # Run in development mode
 ```
 
 - `.auto-claude/specs/` - Per-project data (specs, plans, QA reports) - gitignored
+
+## Fork Status
+
+This is a fork of `AndyMik90/Auto-Claude`. Remotes:
+- `origin` = `KatsuJinCode/Auto-Claudev2.0` (our fork, push here)
+- `upstream` = `AndyMik90/Auto-Claude` (source repo, pull updates from here)
+
+For upstream merge protocol, see `~/.claude/topics/git-workflows/FORK_UPSTREAM_MERGE_PROTOCOL.md`

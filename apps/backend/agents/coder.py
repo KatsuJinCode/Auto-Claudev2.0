@@ -46,7 +46,6 @@ from ui import (
     StatusManager,
     bold,
     box,
-    find_latest_claude_session,
     highlight,
     icon,
     muted,
@@ -342,15 +341,14 @@ async def run_autonomous_agent(
 
         # Run session with async context manager
         async with client:
-            status, response = await run_agent_session(
+            status, response, claude_session_id = await run_agent_session(
                 client, prompt, spec_dir, verbose, phase=current_log_phase
             )
 
-        # Capture and store Claude session ID for potential resume
+        # Store the Claude session ID for potential resume capability
         # This enables recovering stuck tasks by resuming the interrupted session
-        latest_session = find_latest_claude_session(project_dir)
-        if latest_session:
-            status_manager.update_claude_session_id(latest_session)
+        if claude_session_id:
+            status_manager.update_claude_session_id(claude_session_id)
 
         # === POST-SESSION PROCESSING (100% reliable) ===
         if subtask_id and not first_run:

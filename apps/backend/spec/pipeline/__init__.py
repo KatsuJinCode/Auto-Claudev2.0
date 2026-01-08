@@ -12,7 +12,11 @@ Components:
 
 from init import init_auto_claude_dir
 
-from .models import get_spec_dir_worktree_aware, get_specs_dir, list_all_specs_worktree_aware
+from .models import (
+    get_spec_dir_worktree_aware,
+    get_specs_dir,
+    list_all_specs_worktree_aware,
+)
 from .orchestrator import SpecOrchestrator
 
 __all__ = [
