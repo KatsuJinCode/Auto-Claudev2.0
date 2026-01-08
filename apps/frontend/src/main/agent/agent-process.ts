@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { ProcessType, ExecutionProgressData } from './types';
+import { getAgentRegistry, AgentRegistryEntry } from './agent-registry';
 import { detectRateLimit, createSDKRateLimitInfo, getProfileEnv, detectAuthFailure } from '../rate-limit-detector';
 import { projectStore } from '../project-store';
 import { getClaudeProfileManager } from '../claude-profile-manager';
@@ -57,6 +58,14 @@ export interface SpawnAgentOptions {
    * Set to null to disable file output (stdio will be ignored)
    */
   outputFile?: string | null;
+  /** Optional session ID for the Claude conversation */
+  sessionId?: string;
+  /**
+   * Whether to register the agent in the registry
+   * Set to false to skip registry registration (useful for non-persistent processes)
+   * Defaults to true
+   */
+  registerInRegistry?: boolean;
 }
 
 /**
@@ -245,6 +254,70 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
       // Ignore lockfile cleanup errors
     }
     throw new Error('Failed to spawn agent process: no PID returned');
+  }
+
+  // Register agent in registry (unless explicitly disabled)
+  // This enables the GUI to discover and reconnect to this agent after restart
+  const shouldRegister = options.registerInRegistry !== false;
+
+  if (shouldRegister) {
+    const now = new Date().toISOString();
+    const registryEntry: AgentRegistryEntry = {
+      pid: childProcess.pid,
+      executionId,
+      specId,
+      sessionId: options.sessionId,
+      startedAt: now,
+      lastHeartbeat: now,
+      status: 'running',
+      outputFile: outputFile || '',
+      lockFile,
+      workingDirectory: cwd
+    };
+
+    try {
+      const registry = getAgentRegistry();
+      const registered = registry.registerAgent(registryEntry);
+
+      if (!registered) {
+        // Registration failed (save error) - log warning but don't fail spawn
+        // The process is already running, so we should return success
+        console.warn(
+          `[spawnAgentProcess] Failed to save registry entry for specId '${specId}'. ` +
+            'Agent will run but may not be discoverable after GUI restart.'
+        );
+      }
+    } catch (error) {
+      // Registration threw an error (e.g., duplicate running agent)
+      // This is a critical error - we should clean up and fail
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[spawnAgentProcess] Failed to register agent in registry: ${errorMessage}`
+      );
+
+      // Kill the spawned process since we can't track it properly
+      try {
+        childProcess.kill();
+      } catch {
+        // Ignore kill errors
+      }
+
+      // Clean up resources
+      if (outputFd !== undefined) {
+        try {
+          fs.closeSync(outputFd);
+        } catch {
+          // Ignore close errors
+        }
+      }
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {
+        // Ignore lockfile cleanup errors
+      }
+
+      throw new Error(`Failed to register agent in registry: ${errorMessage}`);
+    }
   }
 
   return {
