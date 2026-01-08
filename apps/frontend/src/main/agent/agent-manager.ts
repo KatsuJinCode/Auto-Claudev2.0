@@ -108,6 +108,8 @@ interface ReconnectedAgent {
   streamer: FileOutputStreamer;
   /** PID check interval */
   pidCheckInterval?: ReturnType<typeof setInterval>;
+  /** Whether the agent has been marked as possibly crashed (to avoid repeated warnings) */
+  markedAsPossiblyCrashed?: boolean;
 }
 
 /**
@@ -1002,6 +1004,11 @@ export class AgentManager extends EventEmitter {
    * 2. Emits exit events to update the UI
    * 3. Cleans up by unregistering from registry and deleting lockfile
    * 4. Disconnects from the agent (stops file tailing)
+   *
+   * Additionally, this method checks the heartbeat to detect hung/crashed agents:
+   * - If PID is alive but heartbeat is stale (> 60 seconds old), marks agent as 'possibly_crashed'
+   * - Emits a warning event to the GUI so the user can see the agent may be hung
+   * - This provides a secondary health check beyond simple PID monitoring
    */
   private startPidMonitoring(agent: ReconnectedAgent): void {
     const { entry, taskId, streamer } = agent;
@@ -1035,8 +1042,92 @@ export class AgentManager extends EventEmitter {
 
         // Clean up monitoring (this also stops the streamer)
         this.disconnectFromAgent(taskId);
+      } else {
+        // Process is alive - check heartbeat to detect hung/crashed agents
+        // This provides a secondary health check: a process can be alive but unresponsive
+        this.checkAndUpdateHeartbeatStatus(agent);
       }
     }, 2000);
+  }
+
+  /**
+   * Check the heartbeat status of a reconnected agent and update status if stale
+   *
+   * This method detects the case where:
+   * - PID is alive (process exists)
+   * - But heartbeat is stale (agent hasn't updated heartbeat in > 60 seconds)
+   *
+   * This typically indicates the agent is hung, crashed internally, or stuck.
+   * The GUI should show a warning to the user so they can decide to force stop.
+   *
+   * @param agent - The reconnected agent to check
+   */
+  private checkAndUpdateHeartbeatStatus(agent: ReconnectedAgent): void {
+    const { entry, taskId } = agent;
+    const registry = getAgentRegistry();
+
+    // Check heartbeat status
+    const heartbeatResult = registry.checkHeartbeat(entry.specId);
+
+    if (heartbeatResult.status === 'stale') {
+      // Heartbeat is stale - agent may be hung or crashed
+      // Only emit warning once to avoid spamming the UI
+      if (!agent.markedAsPossiblyCrashed) {
+        agent.markedAsPossiblyCrashed = true;
+
+        // Update registry status to 'possibly_crashed'
+        const currentEntry = registry.get(entry.specId);
+        if (currentEntry && currentEntry.status !== 'possibly_crashed') {
+          registry.updatePartial(entry.specId, { status: 'possibly_crashed' });
+          registry.save();
+        }
+
+        // Emit warning event to the GUI
+        const ageSeconds = heartbeatResult.ageMs
+          ? Math.round(heartbeatResult.ageMs / 1000)
+          : 'unknown';
+
+        this.emit('execution-progress', taskId, {
+          phase: 'coding', // Keep showing as coding phase but with warning
+          phaseProgress: 50,
+          overallProgress: 50,
+          message: `⚠️ Agent may be hung (no heartbeat for ${ageSeconds}s)`,
+          warning: true // Custom flag to indicate this is a warning state
+        });
+
+        console.warn(
+          `[AgentManager] Agent '${entry.specId}' may be hung or crashed: ` +
+          `PID ${entry.pid} is alive but heartbeat is ${ageSeconds}s old. ` +
+          `User may need to force stop this agent.`
+        );
+      }
+    } else if (heartbeatResult.status === 'healthy' && agent.markedAsPossiblyCrashed) {
+      // Heartbeat recovered - agent is responsive again
+      agent.markedAsPossiblyCrashed = false;
+
+      // Update registry status back to 'running'
+      const currentEntry = registry.get(entry.specId);
+      if (currentEntry && currentEntry.status === 'possibly_crashed') {
+        registry.updatePartial(entry.specId, { status: 'running' });
+        registry.save();
+      }
+
+      // Emit update to clear the warning
+      this.emit('execution-progress', taskId, {
+        phase: 'coding',
+        phaseProgress: 50,
+        overallProgress: 50,
+        message: 'Agent resumed activity'
+      });
+
+      console.log(
+        `[AgentManager] Agent '${entry.specId}' heartbeat recovered. ` +
+        `Status changed from 'possibly_crashed' back to 'running'.`
+      );
+    }
+    // For 'missing' or 'error' status, we don't mark as crashed
+    // because the agent may not have started writing heartbeats yet
+    // or there was a temporary file access issue
   }
 
   /**
