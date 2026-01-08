@@ -330,6 +330,90 @@ export class AgentRegistry {
   getCount(): number {
     return Object.keys(this.data.agents).length;
   }
+
+  /**
+   * Register a new agent process in the registry
+   * Validates the entry and saves to disk immediately
+   *
+   * @param entry - Complete agent registry entry to register
+   * @returns true if registered successfully, false on error
+   * @throws Error if entry is invalid or an agent with the same specId already exists
+   */
+  registerAgent(entry: AgentRegistryEntry): boolean {
+    // Validate required fields
+    if (!this.isCompleteEntry(entry)) {
+      throw new Error(`[AgentRegistry] Invalid entry: missing required fields`);
+    }
+
+    // Check for duplicate registration (same specId with running status)
+    const existing = this.data.agents[entry.specId];
+    if (existing && existing.status === 'running') {
+      throw new Error(
+        `[AgentRegistry] Agent with specId '${entry.specId}' is already registered and running`
+      );
+    }
+
+    // Register the agent
+    this.data.agents[entry.specId] = {
+      ...entry,
+      status: entry.status || 'running'
+    };
+    this.isDirty = true;
+
+    // Save immediately to ensure persistence
+    const saved = this.save();
+    if (!saved) {
+      // Rollback on save failure
+      if (existing) {
+        this.data.agents[entry.specId] = existing;
+      } else {
+        delete this.data.agents[entry.specId];
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Unregister an agent process from the registry
+   * Removes the entry and saves to disk immediately
+   *
+   * @param specId - The spec ID of the agent to unregister
+   * @returns true if unregistered successfully, false if not found or save failed
+   */
+  unregisterAgent(specId: string): boolean {
+    const existing = this.data.agents[specId];
+    if (!existing) {
+      return false;
+    }
+
+    // Remove the entry
+    delete this.data.agents[specId];
+    this.isDirty = true;
+
+    // Save immediately
+    const saved = this.save();
+    if (!saved) {
+      // Rollback on save failure
+      this.data.agents[specId] = existing;
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Get all agents that are currently running
+   * Filters entries by status === 'running'
+   *
+   * @returns Array of agent entries with 'running' status
+   */
+  getRunningAgents(): AgentRegistryEntry[] {
+    return Object.values(this.data.agents).filter(
+      (agent) => agent.status === 'running'
+    );
+  }
 }
 
 // Singleton instance for app-wide use
