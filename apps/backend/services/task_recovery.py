@@ -402,3 +402,250 @@ def recover_if_stuck(
 
         # No recovery needed
         return RECOVERY_ACTION_NONE
+
+
+# Start coding action return values
+START_CODING_SUCCESS = "success"
+START_CODING_LOCK_FAILED = "lock_failed"
+START_CODING_NO_STATE = "no_state"
+START_CODING_WRONG_STATUS = "wrong_status"
+START_CODING_WORKTREE_FAILED = "worktree_failed"
+START_CODING_MAX_RETRIES = "max_retries"
+
+
+def _create_worktree(base_dir: Path, task_id: str, base_branch: str | None = None) -> bool:
+    """
+    Create a worktree for a task.
+
+    Creates a git worktree at .worktrees/{task_id}/ with a new branch
+    auto-claude/{task_id} based off the base branch.
+
+    Args:
+        base_dir: Project root directory.
+        task_id: Unique identifier for the task (spec name).
+        base_branch: Base branch to create worktree from. If None, auto-detects
+            main/master or falls back to current branch.
+
+    Returns:
+        True if worktree created successfully, False on error.
+    """
+    import subprocess
+
+    worktree_path = base_dir / ".worktrees" / task_id
+    branch_name = f"auto-claude/{task_id}"
+
+    # Auto-detect base branch if not provided
+    if base_branch is None:
+        # Try main, then master, then current branch
+        for candidate in ["main", "master"]:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", candidate],
+                cwd=str(base_dir),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                base_branch = candidate
+                break
+
+        if base_branch is None:
+            # Fall back to current branch
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(base_dir),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                base_branch = result.stdout.strip()
+            else:
+                logger.error(
+                    f"WORKTREE_CREATE_FAILED {task_id}: could not determine base branch"
+                )
+                return False
+
+    try:
+        # Remove existing worktree if present (from crashed previous run)
+        if worktree_path.exists():
+            result = subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree_path)],
+                cwd=str(base_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            # Don't fail if removal fails - just log and continue
+
+        # Delete branch if it exists (from previous attempt)
+        subprocess.run(
+            ["git", "branch", "-D", branch_name],
+            cwd=str(base_dir),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        # Create worktree with new branch from base
+        result = subprocess.run(
+            ["git", "worktree", "add", "-b", branch_name, str(worktree_path), base_branch],
+            cwd=str(base_dir),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        if result.returncode != 0:
+            logger.error(
+                f"WORKTREE_CREATE_FAILED {task_id}: git worktree add failed: "
+                f"{result.stderr.strip()}"
+            )
+            return False
+
+        logger.info(
+            f"WORKTREE_CREATED {task_id}: created at {worktree_path} "
+            f"on branch {branch_name} from {base_branch}"
+        )
+        return True
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"WORKTREE_CREATE_TIMEOUT {task_id}: operation timed out")
+        return False
+    except Exception as e:
+        logger.error(f"WORKTREE_CREATE_ERROR {task_id}: {e}")
+        return False
+
+
+def touch_activity(base_dir: Path, task_id: str) -> bool:
+    """
+    Update activity marker to prevent zombie detection.
+
+    Creates or updates the modification time of the .task_activity marker file
+    in the task's worktree directory. Workers should call this periodically
+    (every 5-10 minutes) during coding to signal they are still alive.
+
+    Args:
+        base_dir: Project root directory containing the .worktrees folder.
+        task_id: Unique identifier for the task (spec name).
+
+    Returns:
+        True if marker was touched successfully, False on error.
+
+    Example:
+        # Worker should call periodically during long operations
+        touch_activity(Path("/project"), "my-task")
+    """
+    activity_marker = base_dir / ".worktrees" / task_id / ACTIVITY_MARKER_FILE
+
+    try:
+        # Ensure parent directory exists
+        activity_marker.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create or update the marker file
+        activity_marker.touch()
+        return True
+
+    except OSError as e:
+        logger.warning(f"Could not touch activity marker for task {task_id}: {e}")
+        return False
+
+
+def start_coding(
+    task_id: str,
+    base_dir: Path,
+    state_dir: Path | None = None,
+    base_branch: str | None = None,
+) -> str:
+    """
+    Atomic transition from ready to coding state.
+
+    This function performs the complete transition from "ready" to "coding" status:
+    1. Acquires task lock
+    2. Validates task is in "ready" status
+    3. Creates a git worktree for the task
+    4. Creates an activity marker file
+    5. Updates task state to "coding"
+
+    All operations are performed under lock to prevent race conditions.
+
+    Args:
+        task_id: Unique identifier for the task.
+        base_dir: Project root directory containing the .worktrees folder.
+        state_dir: Directory where task state files are stored. If None, uses
+            base_dir / ".auto-claude" / "specs".
+        base_branch: Base branch to create worktree from. If None, auto-detects.
+
+    Returns:
+        Action string indicating the result:
+        - "success": Task successfully transitioned to coding state
+        - "lock_failed": Could not acquire lock, retry later
+        - "no_state": No state file found for task
+        - "wrong_status": Task is not in "ready" status
+        - "worktree_failed": Failed to create worktree
+        - "max_retries": Task has exceeded maximum recovery attempts
+
+    Example:
+        result = start_coding("my-task", Path("/project"))
+        if result == "success":
+            # Task is now in coding state with worktree ready
+            ...
+        elif result == "lock_failed":
+            # Retry next polling cycle
+            ...
+    """
+    # Import here to avoid circular dependency
+    from services.task_state import load_state, save_state, utc_now
+
+    # Default state directory follows Auto-Claude convention
+    if state_dir is None:
+        state_dir = base_dir / ".auto-claude" / "specs"
+
+    # Acquire lock before modifying state
+    with task_lock(task_id, state_dir) as acquired:
+        if not acquired:
+            return START_CODING_LOCK_FAILED
+
+        # Load current state
+        state = load_state(task_id, state_dir)
+        if state is None:
+            logger.warning(f"NO_STATE {task_id}: no state file found, cannot start coding")
+            return START_CODING_NO_STATE
+
+        # Check if task has exceeded max recovery attempts
+        if state.recovery_attempts >= MAX_RECOVERY_ATTEMPTS:
+            logger.warning(
+                f"MAX_RETRIES {task_id}: cannot start coding, task has exceeded "
+                f"maximum recovery attempts ({state.recovery_attempts}/{MAX_RECOVERY_ATTEMPTS})"
+            )
+            return START_CODING_MAX_RETRIES
+
+        # Validate task is in ready status
+        if state.status != "ready":
+            logger.warning(
+                f"WRONG_STATUS {task_id}: cannot start coding, status is "
+                f"'{state.status}' (expected 'ready')"
+            )
+            return START_CODING_WRONG_STATUS
+
+        # Create the worktree
+        if not _create_worktree(base_dir, task_id, base_branch):
+            # Increment recovery attempts on failure
+            state.recovery_attempts += 1
+            state.last_activity = utc_now()
+            save_state(state, state_dir)
+            return START_CODING_WORKTREE_FAILED
+
+        # Create activity marker
+        touch_activity(base_dir, task_id)
+
+        # Update state to coding
+        state.status = "coding"
+        state.last_activity = utc_now()
+        save_state(state, state_dir)
+
+        logger.info(
+            f"START_CODING {task_id}: transitioned from 'ready' to 'coding', "
+            f"worktree created at .worktrees/{task_id}/"
+        )
+        return START_CODING_SUCCESS
