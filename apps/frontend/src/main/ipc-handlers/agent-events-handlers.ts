@@ -10,7 +10,7 @@ import type {
   ImplementationPlan
 } from '../../shared/types';
 import { AgentManager } from '../agent';
-import type { ProcessType, ExecutionProgressData } from '../agent';
+import type { ProcessType, ExecutionProgressData, AgentRegistryEntry } from '../agent';
 import { titleGenerator } from '../title-generator';
 import { fileWatcher } from '../file-watcher';
 import { projectStore } from '../project-store';
@@ -83,6 +83,51 @@ export function registerAgenteventsHandlers(
     const mainWindow = getMainWindow();
     if (mainWindow) {
       mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_SDK_RATE_LIMIT, rateLimitInfo);
+    }
+  });
+
+  // Handle agent reconnection events (when GUI reconnects to a detached agent after restart)
+  // This notifies the renderer that the task is running so the TaskCard shows correct state
+  agentManager.on('reconnect', (taskId: string, entry: AgentRegistryEntry) => {
+    const mainWindow = getMainWindow();
+    if (mainWindow) {
+      console.log(`[AgentEvents] Agent reconnected: ${taskId} (PID: ${entry.pid})`);
+
+      // Notify renderer that this task is in_progress
+      // This ensures the TaskCard shows the correct running state after GUI restart
+      mainWindow.webContents.send(
+        IPC_CHANNELS.TASK_STATUS_CHANGE,
+        taskId,
+        'in_progress'
+      );
+
+      // Start file watcher for this task if we have the working directory
+      // This enables real-time progress updates from implementation_plan.json
+      if (entry.workingDirectory) {
+        try {
+          // Find the project and spec directory for file watching
+          const projects = projectStore.getProjects();
+          let specDir: string | undefined;
+
+          for (const project of projects) {
+            const tasks = projectStore.getTasks(project.id);
+            const task = tasks.find((t) => t.id === taskId || t.specId === taskId);
+
+            if (task) {
+              const autoBuildDir = project.autoBuildPath || '.auto-claude';
+              specDir = getWorktreeAwareSpecDir(project.path, autoBuildDir, task.specId);
+              break;
+            }
+          }
+
+          if (specDir && existsSync(specDir)) {
+            fileWatcher.watch(taskId, specDir);
+            console.log(`[AgentEvents] Started file watcher for reconnected agent: ${taskId}`);
+          }
+        } catch (watchError) {
+          console.warn(`[AgentEvents] Failed to start file watcher for ${taskId}:`, watchError);
+        }
+      }
     }
   });
 

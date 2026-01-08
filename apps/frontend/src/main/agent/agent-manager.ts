@@ -5,9 +5,10 @@ import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager, killAgentProcess, forceKillAgentProcess } from './agent-process';
 import { AgentQueueManager } from './agent-queue';
-import { getAgentRegistry, AgentRegistryEntry } from './agent-registry';
+import { getAgentRegistry, AgentRegistryEntry, readHeartbeat } from './agent-registry';
 import { FileOutputStreamer, createFileOutputStreamer } from './file-output-streamer';
 import { getClaudeProfileManager } from '../claude-profile-manager';
+import type { ExecutionProgressData } from './types';
 import {
   SpecCreationMetadata,
   TaskExecutionOptions,
@@ -591,13 +592,25 @@ export class AgentManager extends EventEmitter {
 
     this.reconnectedAgents.set(taskId, reconnectedAgent);
 
-    // Emit initial status - agent is reconnected and running
-    this.emit('execution-progress', taskId, {
-      phase: 'coding', // Assume coding phase for reconnected agents
-      phaseProgress: 50, // Unknown progress, show middle
-      overallProgress: 50,
-      message: 'Reconnected to running agent'
-    });
+    // Emit reconnect event so the IPC handlers can notify the renderer
+    // This triggers TASK_STATUS_CHANGE to 'in_progress' in the UI
+    this.emit('reconnect', taskId, entry);
+
+    // Read heartbeat data to get accurate phase/progress information
+    // The heartbeat contains current activity and progress from the running agent
+    const heartbeatResult = readHeartbeat(entry.workingDirectory, entry.specId);
+
+    // Build execution progress data from heartbeat (if available) or use defaults
+    const progressData: ExecutionProgressData = this.buildReconnectProgressData(entry, heartbeatResult);
+
+    // Emit execution-progress with accurate data from heartbeat
+    this.emit('execution-progress', taskId, progressData);
+
+    console.log(
+      `[AgentManager] Emitted reconnect events for ${taskId}: ` +
+      `phase=${progressData.phase}, progress=${progressData.overallProgress}%` +
+      (heartbeatResult.success ? ` (from heartbeat: ${heartbeatResult.data?.currentActivity || 'no activity'})` : ' (no heartbeat)')
+    );
 
     // Start PID monitoring to detect when process exits
     this.startPidMonitoring(reconnectedAgent);
@@ -605,6 +618,85 @@ export class AgentManager extends EventEmitter {
     return {
       success: true,
       taskId
+    };
+  }
+
+  /**
+   * Build execution progress data from heartbeat and registry entry
+   *
+   * This extracts useful information from the heartbeat file (if available)
+   * to provide accurate phase and progress data to the renderer.
+   *
+   * @param entry - The agent registry entry
+   * @param heartbeatResult - Result from reading the heartbeat file
+   * @returns ExecutionProgressData for the renderer
+   */
+  private buildReconnectProgressData(
+    entry: AgentRegistryEntry,
+    heartbeatResult: ReturnType<typeof readHeartbeat>
+  ): ExecutionProgressData {
+    // Default values for reconnected agents
+    let phase: ExecutionProgressData['phase'] = 'coding';
+    let phaseProgress = 50;
+    let overallProgress = 50;
+    let message = 'Reconnected to running agent';
+    let currentSubtask: string | undefined;
+
+    if (heartbeatResult.success && heartbeatResult.data) {
+      const heartbeat = heartbeatResult.data;
+
+      // Try to detect phase from currentActivity string
+      // The Python backend writes activity messages that include phase hints
+      const activity = heartbeat.currentActivity?.toLowerCase() || '';
+
+      if (activity.includes('planning') || activity.includes('plan')) {
+        phase = 'planning';
+        phaseProgress = 50;
+        overallProgress = this.events.calculateOverallProgress('planning', 50);
+      } else if (activity.includes('qa') || activity.includes('review')) {
+        if (activity.includes('fix')) {
+          phase = 'qa_fixing';
+        } else {
+          phase = 'qa_review';
+        }
+        phaseProgress = 50;
+        overallProgress = this.events.calculateOverallProgress(phase, 50);
+      } else {
+        // Default to coding phase for running agents
+        phase = 'coding';
+        // Use progress from heartbeat if available
+        if (typeof heartbeat.progressPercent === 'number') {
+          phaseProgress = heartbeat.progressPercent;
+          overallProgress = this.events.calculateOverallProgress('coding', phaseProgress);
+        } else {
+          overallProgress = this.events.calculateOverallProgress('coding', 50);
+        }
+      }
+
+      // Use current activity as the message if available
+      if (heartbeat.currentActivity) {
+        message = heartbeat.currentActivity;
+      } else {
+        message = `Reconnected - ${heartbeat.status || 'running'}`;
+      }
+    } else {
+      // No heartbeat available - use registry status if meaningful
+      if (entry.status === 'possibly_crashed') {
+        message = '⚠️ Reconnected to agent (may be unresponsive)';
+      } else {
+        message = 'Reconnected to running agent';
+      }
+
+      // Calculate overall progress for default coding phase
+      overallProgress = this.events.calculateOverallProgress('coding', 50);
+    }
+
+    return {
+      phase,
+      phaseProgress,
+      overallProgress,
+      message,
+      currentSubtask
     };
   }
 
