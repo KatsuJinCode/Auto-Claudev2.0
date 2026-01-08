@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { existsSync, readFileSync } from 'fs';
 import { app } from 'electron';
 import { EventEmitter } from 'events';
+import { v4 as uuidv4 } from 'uuid';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { ProcessType, ExecutionProgressData } from './types';
@@ -11,11 +12,14 @@ import { detectRateLimit, createSDKRateLimitInfo, getProfileEnv, detectAuthFailu
 import { projectStore } from '../project-store';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { findPythonCommand, parsePythonCommand } from '../python-detector';
+import { ensureDir } from '../fs-utils';
 
 /**
  * Options for spawning a detached agent process
  */
 export interface SpawnAgentOptions {
+  /** Spec ID - used for lockfile naming and registry tracking */
+  specId: string;
   /** Command to execute */
   command: string;
   /** Arguments for the command */
@@ -36,6 +40,10 @@ export interface SpawnAgentResult {
   process: ChildProcess;
   /** Process ID of the spawned process */
   pid: number;
+  /** Unique execution ID (UUID) for PID reuse protection */
+  executionId: string;
+  /** Path to the lockfile containing the executionId */
+  lockFile: string;
   /** Path to the output file (if using file output) */
   outputFile?: string;
 }
@@ -56,7 +64,43 @@ export interface SpawnAgentResult {
  * @throws Error if the process fails to spawn or has no PID
  */
 export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult {
-  const { command, args, cwd, env = {}, outputFile } = options;
+  const { specId, command, args, cwd, env = {}, outputFile } = options;
+
+  // Generate unique execution ID (UUID) for PID reuse protection
+  // This ID is written to a lockfile and validated on reconnection
+  const executionId = uuidv4();
+
+  // Create lockfile path at .auto-claude/agent-locks/{specId}.lock
+  const locksDir = path.join(cwd, '.auto-claude', 'agent-locks');
+  const lockFile = path.join(locksDir, `${specId}.lock`);
+
+  // Ensure locks directory exists
+  if (!ensureDir(locksDir)) {
+    throw new Error(`Failed to create agent locks directory: ${locksDir}`);
+  }
+
+  // Write lockfile with executionId before spawning
+  // This allows the agent process to read it and for later validation
+  try {
+    const lockfileContent = JSON.stringify(
+      {
+        executionId,
+        specId,
+        createdAt: new Date().toISOString()
+      },
+      null,
+      2
+    );
+    fs.writeFileSync(lockFile, lockfileContent, { encoding: 'utf-8', mode: 0o600 });
+
+    // Set restrictive permissions on Unix (owner read/write only)
+    if (process.platform !== 'win32') {
+      fs.chmodSync(lockFile, 0o600);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to write lockfile ${lockFile}: ${errorMessage}`);
+  }
 
   // Determine platform-specific spawn options
   const isWindows = process.platform === 'win32';
@@ -132,12 +176,20 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
         // Ignore close errors
       }
     }
+    // Clean up lockfile since spawn failed
+    try {
+      fs.unlinkSync(lockFile);
+    } catch {
+      // Ignore lockfile cleanup errors
+    }
     throw new Error('Failed to spawn agent process: no PID returned');
   }
 
   return {
     process: childProcess,
     pid: childProcess.pid,
+    executionId,
+    lockFile,
     outputFile
   };
 }
