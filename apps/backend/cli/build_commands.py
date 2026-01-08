@@ -128,19 +128,40 @@ def handle_build_command(
     unmet_deps = check_unmet_dependencies(project_dir, spec_dir)
     if unmet_deps:
         print()
+        dep_count = len(unmet_deps)
         content = [
             bold(f"{icon(Icons.WARNING)} BUILD BLOCKED - UNMET DEPENDENCIES"),
             "",
-            "This spec depends on other specs that are not yet complete:",
+            f"This spec has {dep_count} blocking dependenc{'y' if dep_count == 1 else 'ies'}:",
             "",
         ]
+
         for dep in unmet_deps:
-            content.append(f"  • {dep['spec_id']}: {dep['reason']}")
+            spec_id = dep['spec_id']
+            status = dep['status']
+
+            # Format status with appropriate indicator
+            if status == "not_found":
+                status_text = muted("(not found)")
+                action = f"Create spec '{spec_id}' first"
+            elif status == "pending":
+                status_text = muted("(not started)")
+                action = f"python auto-claude/run.py --spec {spec_id}"
+            elif status == "in_progress":
+                status_text = highlight("(in progress)")
+                action = f"Complete and merge '{spec_id}'"
+            else:
+                status_text = muted(f"({status})")
+                action = f"Complete spec '{spec_id}'"
+
+            content.append(f"  {icon(Icons.BLOCKED)} {bold(spec_id)} {status_text}")
+            content.append(f"     └─ {muted(action)}")
+
         content.extend([
             "",
             highlight("Complete the required dependencies first, then retry."),
             "",
-            muted("Dependencies must be merged or have all subtasks completed."),
+            muted("Dependencies are satisfied when merged or all subtasks are completed."),
         ])
         print(box(content, width=70, style="heavy"))
         print()
