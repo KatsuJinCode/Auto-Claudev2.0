@@ -42,6 +42,7 @@ from workspace import (
     handle_workspace_choice,
     setup_workspace,
 )
+from dependencies import check_unmet_dependencies
 
 from .input_handlers import (
     read_from_file,
@@ -121,6 +122,28 @@ def handle_build_command(
 
     # Validate environment
     if not validate_environment(spec_dir):
+        sys.exit(1)
+
+    # Check for unmet dependencies
+    unmet_deps = check_unmet_dependencies(project_dir, spec_dir)
+    if unmet_deps:
+        print()
+        content = [
+            bold(f"{icon(Icons.WARNING)} BUILD BLOCKED - UNMET DEPENDENCIES"),
+            "",
+            "This spec depends on other specs that are not yet complete:",
+            "",
+        ]
+        for dep in unmet_deps:
+            content.append(f"  • {dep['spec_id']}: {dep['reason']}")
+        content.extend([
+            "",
+            highlight("Complete the required dependencies first, then retry."),
+            "",
+            muted("Dependencies must be merged or have all subtasks completed."),
+        ])
+        print(box(content, width=70, style="heavy"))
+        print()
         sys.exit(1)
 
     # Check human review approval
