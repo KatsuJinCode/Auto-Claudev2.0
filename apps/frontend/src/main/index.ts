@@ -3,7 +3,7 @@ import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import { setupIpcHandlers } from './ipc-setup';
-import { AgentManager } from './agent';
+import { AgentManager, getAgentRegistry } from './agent';
 import { TerminalManager } from './terminal-manager';
 import { pythonEnvManager } from './python-env-manager';
 import { getUsageMonitor } from './claude-profile/usage-monitor';
@@ -224,6 +224,35 @@ app.whenReady().then(() => {
       console.warn('[main] Found stale agent entries:', discovery.staleAgents.length);
       for (const { entry, reason } of discovery.staleAgents) {
         console.warn(`[main]   - ${entry.specId}: ${reason}`);
+      }
+
+      // Clean up stale registry entries and their lockfiles
+      // This removes entries where the PID no longer exists or executionId mismatches
+      const registry = getAgentRegistry();
+      const cleanupResult = registry.cleanupStaleEntries(discovery.staleAgents);
+
+      if (cleanupResult.cleaned > 0 || cleanupResult.lockfilesDeleted > 0) {
+        console.warn(`[main] Cleaned up ${cleanupResult.cleaned} stale registry entries`);
+        console.warn(`[main] Deleted ${cleanupResult.lockfilesDeleted} orphaned lockfiles`);
+      }
+
+      if (cleanupResult.errors.length > 0) {
+        console.warn('[main] Cleanup errors:', cleanupResult.errors);
+      }
+
+      // Also scan for orphaned lockfiles in each unique working directory
+      // from the stale entries (lockfiles without any registry entry)
+      const workingDirs = new Set(discovery.staleAgents.map(({ entry }) => entry.workingDirectory));
+      for (const workDir of workingDirs) {
+        if (workDir) {
+          const orphanResult = registry.cleanupOrphanedLockfiles(workDir);
+          if (orphanResult.deleted > 0) {
+            console.warn(`[main] Deleted ${orphanResult.deleted} additional orphaned lockfiles in ${workDir}`);
+          }
+          if (orphanResult.errors.length > 0) {
+            console.warn('[main] Orphan cleanup errors:', orphanResult.errors);
+          }
+        }
       }
     }
 
