@@ -9,10 +9,20 @@ Supports multiple AI agent backends:
 - Claude (via ClaudeSDKClient with rich streaming and tool callbacks)
 - Gemini (via CLI subprocess)
 - OpenCode (via CLI subprocess)
+
+Includes heartbeat system for detached agent processes to enable:
+- Health monitoring (detect hung/crashed agents)
+- Status synchronization with GUI
+- Safe reconnection after GUI restarts
 """
 
+import asyncio
+import json
 import logging
+import os
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import ResultMessage
@@ -50,6 +60,324 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Heartbeat System for Detached Agent Processes
+# ============================================================================
+
+# Agent status values (must match frontend AgentStatus type)
+AgentStatusType = Literal[
+    "running", "completed", "failed", "stopped", "possibly_crashed"
+]
+
+# Default heartbeat interval in seconds
+HEARTBEAT_INTERVAL_SECONDS = 30
+
+# Heartbeat directory name (relative to working directory)
+HEARTBEAT_DIR = ".auto-claude/agent-heartbeat"
+
+
+class HeartbeatData(TypedDict, total=False):
+    """
+    Heartbeat file data format.
+
+    Matches the frontend HeartbeatData interface in agent-registry.ts.
+    Heartbeat files are stored at .auto-claude/agent-heartbeat/{specId}.json
+    and are written periodically by running agents to indicate they are alive.
+
+    This provides a secondary health check beyond PID monitoring:
+    - PID check: verifies process exists
+    - Heartbeat check: verifies process is responsive (not hung/crashed)
+    """
+
+    timestamp: str  # ISO timestamp when this heartbeat was written (required)
+    status: AgentStatusType  # Current status of the agent (required)
+    executionId: str  # Unique execution ID to correlate with registry (required)
+    specId: str  # Spec ID the agent is working on (required)
+    pid: int  # PID of the agent process (required)
+    currentActivity: str  # Optional message about current activity
+    progressPercent: int  # Optional progress percentage (0-100)
+
+
+def get_heartbeat_dir(working_directory: Path) -> Path:
+    """
+    Get the directory path for heartbeat files.
+
+    Args:
+        working_directory: The project working directory
+
+    Returns:
+        Path to the heartbeat directory
+    """
+    return working_directory / HEARTBEAT_DIR
+
+
+def get_heartbeat_file_path(working_directory: Path, spec_id: str) -> Path:
+    """
+    Get the path to a specific agent's heartbeat file.
+
+    Args:
+        working_directory: The project working directory
+        spec_id: The spec ID of the agent
+
+    Returns:
+        Path to the heartbeat file
+    """
+    return get_heartbeat_dir(working_directory) / f"{spec_id}.json"
+
+
+def write_heartbeat(
+    working_directory: Path,
+    data: HeartbeatData,
+) -> tuple[bool, str | None]:
+    """
+    Write a heartbeat file for an agent.
+
+    This function writes a JSON file containing heartbeat data to indicate
+    the agent is still alive and responsive.
+
+    Args:
+        working_directory: The project working directory
+        data: The heartbeat data to write
+
+    Returns:
+        Tuple of (success, error_message)
+    """
+    heartbeat_path = get_heartbeat_file_path(working_directory, data["specId"])
+
+    try:
+        # Ensure directory exists
+        heartbeat_dir = get_heartbeat_dir(working_directory)
+        heartbeat_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write heartbeat file with mode 0o644 (owner read/write, others read)
+        content = json.dumps(data, indent=2)
+        heartbeat_path.write_text(content, encoding="utf-8")
+
+        return True, None
+    except Exception as e:
+        error_msg = f"Failed to write heartbeat: {e}"
+        logger.warning(error_msg)
+        return False, error_msg
+
+
+def delete_heartbeat(working_directory: Path, spec_id: str) -> tuple[bool, str | None]:
+    """
+    Delete a heartbeat file for an agent.
+
+    Used during cleanup when an agent exits.
+
+    Args:
+        working_directory: The project working directory
+        spec_id: The spec ID of the agent
+
+    Returns:
+        Tuple of (success, error_message)
+    """
+    heartbeat_path = get_heartbeat_file_path(working_directory, spec_id)
+
+    try:
+        if heartbeat_path.exists():
+            heartbeat_path.unlink()
+        return True, None
+    except Exception as e:
+        error_msg = f"Failed to delete heartbeat: {e}"
+        logger.warning(error_msg)
+        return False, error_msg
+
+
+class HeartbeatWriter:
+    """
+    Manages periodic heartbeat writes for a running agent session.
+
+    The HeartbeatWriter runs as a background asyncio task that writes
+    heartbeat files every 30 seconds during agent execution. This enables
+    the GUI to detect hung or crashed agents even when the PID is still alive.
+
+    Usage:
+        heartbeat = HeartbeatWriter(
+            working_directory=project_dir,
+            spec_id="001-my-feature",
+            execution_id="uuid-here",
+        )
+        await heartbeat.start()
+        try:
+            # ... run agent session ...
+        finally:
+            await heartbeat.stop()
+
+    Or as async context manager:
+        async with HeartbeatWriter(project_dir, spec_id, execution_id):
+            # ... run agent session ...
+    """
+
+    def __init__(
+        self,
+        working_directory: Path,
+        spec_id: str,
+        execution_id: str,
+        interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
+    ):
+        """
+        Initialize the heartbeat writer.
+
+        Args:
+            working_directory: Project directory where .auto-claude/ is located
+            spec_id: The spec ID this agent is working on
+            execution_id: Unique execution ID (UUID) for PID reuse protection
+            interval_seconds: How often to write heartbeats (default: 30s)
+        """
+        self.working_directory = working_directory
+        self.spec_id = spec_id
+        self.execution_id = execution_id
+        self.interval_seconds = interval_seconds
+        self.pid = os.getpid()
+
+        # Internal state
+        self._task: asyncio.Task | None = None
+        self._running = False
+        self._current_activity: str | None = None
+        self._progress_percent: int | None = None
+        self._status: AgentStatusType = "running"
+
+    def set_activity(self, activity: str | None) -> None:
+        """Update the current activity message shown in heartbeat."""
+        self._current_activity = activity
+
+    def set_progress(self, percent: int | None) -> None:
+        """Update the progress percentage (0-100) shown in heartbeat."""
+        if percent is not None:
+            self._progress_percent = max(0, min(100, percent))
+        else:
+            self._progress_percent = None
+
+    def set_status(self, status: AgentStatusType) -> None:
+        """Update the agent status."""
+        self._status = status
+
+    def _build_heartbeat_data(self) -> HeartbeatData:
+        """Build the heartbeat data dict for writing."""
+        data: HeartbeatData = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": self._status,
+            "executionId": self.execution_id,
+            "specId": self.spec_id,
+            "pid": self.pid,
+        }
+
+        if self._current_activity:
+            data["currentActivity"] = self._current_activity
+
+        if self._progress_percent is not None:
+            data["progressPercent"] = self._progress_percent
+
+        return data
+
+    async def _heartbeat_loop(self) -> None:
+        """Background task that writes heartbeats at regular intervals."""
+        logger.debug(
+            f"Heartbeat loop started for spec {self.spec_id} "
+            f"(interval: {self.interval_seconds}s)"
+        )
+
+        # Write initial heartbeat immediately
+        self._write_heartbeat()
+
+        try:
+            while self._running:
+                await asyncio.sleep(self.interval_seconds)
+                if self._running:  # Check again after sleep
+                    self._write_heartbeat()
+        except asyncio.CancelledError:
+            logger.debug(f"Heartbeat loop cancelled for spec {self.spec_id}")
+            raise
+        finally:
+            logger.debug(f"Heartbeat loop ended for spec {self.spec_id}")
+
+    def _write_heartbeat(self) -> None:
+        """Write a single heartbeat (called from the loop)."""
+        data = self._build_heartbeat_data()
+        success, error = write_heartbeat(self.working_directory, data)
+        if not success:
+            logger.warning(f"Heartbeat write failed for {self.spec_id}: {error}")
+        else:
+            logger.debug(f"Heartbeat written for {self.spec_id} at {data['timestamp']}")
+
+    async def start(self) -> None:
+        """Start the heartbeat background task."""
+        if self._running:
+            logger.warning(f"Heartbeat already running for {self.spec_id}")
+            return
+
+        self._running = True
+        self._task = asyncio.create_task(
+            self._heartbeat_loop(), name=f"heartbeat-{self.spec_id}"
+        )
+        logger.info(f"Heartbeat started for spec {self.spec_id}")
+
+    async def stop(self, final_status: AgentStatusType | None = None) -> None:
+        """
+        Stop the heartbeat background task.
+
+        Args:
+            final_status: Optional final status to write before stopping.
+                         If provided, a final heartbeat is written with this status.
+        """
+        if not self._running:
+            return
+
+        self._running = False
+
+        # Write final heartbeat with updated status if provided
+        if final_status:
+            self._status = final_status
+            self._write_heartbeat()
+
+        # Cancel the background task
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+        self._task = None
+        logger.info(f"Heartbeat stopped for spec {self.spec_id}")
+
+    async def __aenter__(self) -> "HeartbeatWriter":
+        """Async context manager entry - starts heartbeat."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit - stops heartbeat."""
+        # Determine final status based on exception
+        if exc_type is not None:
+            final_status: AgentStatusType = "failed"
+        else:
+            final_status = "completed"
+
+        await self.stop(final_status=final_status)
+
+
+# Global heartbeat writer instance for the current session
+_current_heartbeat: HeartbeatWriter | None = None
+
+
+def get_current_heartbeat() -> HeartbeatWriter | None:
+    """Get the current session's heartbeat writer, if any."""
+    return _current_heartbeat
+
+
+def set_current_heartbeat(heartbeat: HeartbeatWriter | None) -> None:
+    """Set the current session's heartbeat writer."""
+    global _current_heartbeat
+    _current_heartbeat = heartbeat
+
+
+# ============================================================================
+# Post-Session Processing
+# ============================================================================
 
 
 async def post_session_processing(

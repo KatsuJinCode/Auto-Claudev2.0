@@ -9,6 +9,7 @@ This module provides:
 - run_followup_planner: Follow-up planner for completed specs
 - Memory management (Graphiti + file-based fallback)
 - Session management and post-processing
+- Heartbeat system for detached agent processes
 - Utility functions for git and plan management
 
 Uses lazy imports to avoid circular dependencies.
@@ -26,6 +27,17 @@ __all__ = [
     # Session
     "run_agent_session",
     "post_session_processing",
+    # Heartbeat System
+    "HeartbeatWriter",
+    "HeartbeatData",
+    "AgentStatusType",
+    "write_heartbeat",
+    "delete_heartbeat",
+    "get_heartbeat_dir",
+    "get_heartbeat_file_path",
+    "get_current_heartbeat",
+    "set_current_heartbeat",
+    "HEARTBEAT_INTERVAL_SECONDS",
     # Utils
     "get_latest_commit",
     "get_commit_count",
@@ -69,6 +81,32 @@ def __getattr__(name):
         return run_followup_planner
     elif name in ("post_session_processing", "run_agent_session"):
         from .session import post_session_processing, run_agent_session
+
+        return locals()[name]
+    elif name in (
+        "HeartbeatWriter",
+        "HeartbeatData",
+        "AgentStatusType",
+        "write_heartbeat",
+        "delete_heartbeat",
+        "get_heartbeat_dir",
+        "get_heartbeat_file_path",
+        "get_current_heartbeat",
+        "set_current_heartbeat",
+        "HEARTBEAT_INTERVAL_SECONDS",
+    ):
+        from .session import (
+            HEARTBEAT_INTERVAL_SECONDS,
+            AgentStatusType,
+            HeartbeatData,
+            HeartbeatWriter,
+            delete_heartbeat,
+            get_current_heartbeat,
+            get_heartbeat_dir,
+            get_heartbeat_file_path,
+            set_current_heartbeat,
+            write_heartbeat,
+        )
 
         return locals()[name]
     elif name in (
