@@ -97,9 +97,9 @@ def get_session_diff(
 
         if len(diff) > MAX_DIFF_CHARS:
             # Truncate and add note
-            diff = (
-                diff[:MAX_DIFF_CHARS] + f"\n\n... (truncated, {len(diff)} chars total)"
-            )
+            diff = diff[
+                :MAX_DIFF_CHARS
+            ] + f"\n\n... (truncated, {len(diff)} chars total)"
 
         return diff if diff else "(Empty diff)"
 

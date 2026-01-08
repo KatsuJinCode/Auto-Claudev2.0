@@ -108,7 +108,7 @@ def create_spec(
         "task_description": description,
         "workflow_type": workflow_type,
         "services_involved": [name.replace("-", "_")],
-        "created_at": timestamp
+        "created_at": timestamp,
     }
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
@@ -118,7 +118,7 @@ def create_spec(
         "files_to_modify": files_to_modify,
         "files_to_create": files_to_create,
         "files_to_reference": files_to_reference,
-        "scoped_services": [name.replace("-", "_")]
+        "scoped_services": [name.replace("-", "_")],
     }
     (spec_dir / "context.json").write_text(json.dumps(context, indent=2))
 
@@ -158,29 +158,29 @@ def create_spec(
     # 4. implementation_plan.json
     phase_subtasks = []
     for i, chunk_desc in enumerate(chunks, 1):
-        phase_subtasks.append({
-            "id": f"1.{i}",
-            "description": chunk_desc,
-            "status": "pending",
-            "files_to_create": files_to_create if files_to_create else [],
-            "files_to_modify": files_to_modify if files_to_modify else []
-        })
+        phase_subtasks.append(
+            {
+                "id": f"1.{i}",
+                "description": chunk_desc,
+                "status": "pending",
+                "files_to_create": files_to_create if files_to_create else [],
+                "files_to_modify": files_to_modify if files_to_modify else [],
+            }
+        )
 
     implementation_plan = {
         "feature": name.replace("-", "_"),
         "workflow_type": workflow_type,
         "phases": [
-            {
-                "phase": 1,
-                "name": "Core Implementation",
-                "subtasks": phase_subtasks
-            }
+            {"phase": 1, "name": "Core Implementation", "subtasks": phase_subtasks}
         ],
         "status": "approved",
         "planStatus": "approved",
-        "updated_at": timestamp
+        "updated_at": timestamp,
     }
-    (spec_dir / "implementation_plan.json").write_text(json.dumps(implementation_plan, indent=2))
+    (spec_dir / "implementation_plan.json").write_text(
+        json.dumps(implementation_plan, indent=2)
+    )
 
     # 5. review_state.json (CRITICAL - makes spec buildable)
     review_state = {
@@ -189,7 +189,7 @@ def create_spec(
         "approved_at": timestamp,
         "feedback": [],
         "spec_hash": "",
-        "review_count": 1
+        "review_count": 1,
     }
     (spec_dir / "review_state.json").write_text(json.dumps(review_state, indent=2))
 
@@ -261,7 +261,7 @@ def create_spec_from_json(
         "task_description": description,
         "workflow_type": workflow_type,
         "services_involved": [name.replace("-", "_")],
-        "created_at": timestamp
+        "created_at": timestamp,
     }
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
@@ -277,7 +277,7 @@ def create_spec_from_json(
         "files_to_modify": [],
         "files_to_create": list(set(all_files)),
         "files_to_reference": [],
-        "scoped_services": [name.replace("-", "_")]
+        "scoped_services": [name.replace("-", "_")],
     }
     (spec_dir / "context.json").write_text(json.dumps(context, indent=2))
 
@@ -291,7 +291,9 @@ def create_spec_from_json(
             phase_desc = phase.get("description", "")
             deps = phase.get("depends_on", [])
             dep_str = f" (depends on phases: {deps})" if deps else ""
-            phase_descriptions.append(f"### Phase {i}: {phase_name}{dep_str}\n{phase_desc}")
+            phase_descriptions.append(
+                f"### Phase {i}: {phase_name}{dep_str}\n{phase_desc}"
+            )
 
         spec_md = f"""# {name.replace("-", " ").title()}
 
@@ -328,7 +330,7 @@ def create_spec_from_json(
                 "id": f"{i}.{j}",
                 "description": chunk.get("description", f"Implement chunk {j}"),
                 "status": "pending",
-                "files_to_create": chunk.get("files", [])
+                "files_to_create": chunk.get("files", []),
             }
             if "verification" in chunk:
                 # CRITICAL: verification must be a dict, not a string
@@ -342,7 +344,7 @@ def create_spec_from_json(
         phase_entry = {
             "phase": i,
             "name": phase.get("name", f"Phase {i}"),
-            "subtasks": phase_chunks  # MUST be "subtasks" not "chunks"
+            "subtasks": phase_chunks,  # MUST be "subtasks" not "chunks"
         }
         if "description" in phase:
             phase_entry["description"] = phase["description"]
@@ -357,9 +359,11 @@ def create_spec_from_json(
         "phases": impl_phases,
         "status": "approved",
         "planStatus": "approved",
-        "updated_at": timestamp
+        "updated_at": timestamp,
     }
-    (spec_dir / "implementation_plan.json").write_text(json.dumps(implementation_plan, indent=2))
+    (spec_dir / "implementation_plan.json").write_text(
+        json.dumps(implementation_plan, indent=2)
+    )
 
     # 5. review_state.json (CRITICAL - makes spec buildable)
     review_state = {
@@ -368,7 +372,7 @@ def create_spec_from_json(
         "approved_at": timestamp,
         "feedback": [],
         "spec_hash": "",
-        "review_count": 1
+        "review_count": 1,
     }
     (spec_dir / "review_state.json").write_text(json.dumps(review_state, indent=2))
 
@@ -379,54 +383,59 @@ def main():
     parser = argparse.ArgumentParser(
         description="Add a spec to Auto-Claude GUI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
+        epilog=__doc__,
     )
 
     parser.add_argument(
-        "--project-dir", "-p",
+        "--project-dir", "-p", required=True, help="Path to the project directory"
+    )
+    parser.add_argument(
+        "--name",
+        "-n",
         required=True,
-        help="Path to the project directory"
+        help="Spec name (will be slugified, e.g., 'my-feature')",
     )
     parser.add_argument(
-        "--name", "-n",
-        required=True,
-        help="Spec name (will be slugified, e.g., 'my-feature')"
-    )
-    parser.add_argument(
-        "--description", "-d",
+        "--description",
+        "-d",
         default="",
-        help="Task description (required for simple specs, optional with --from-json)"
+        help="Task description (required for simple specs, optional with --from-json)",
     )
     parser.add_argument(
-        "--files-to-create", "-c",
+        "--files-to-create",
+        "-c",
         default="",
-        help="Comma-separated list of files to create"
+        help="Comma-separated list of files to create",
     )
     parser.add_argument(
-        "--files-to-modify", "-m",
+        "--files-to-modify",
+        "-m",
         default="",
-        help="Comma-separated list of files to modify"
+        help="Comma-separated list of files to modify",
     )
     parser.add_argument(
-        "--files-to-reference", "-r",
+        "--files-to-reference",
+        "-r",
         default="",
-        help="Comma-separated list of reference files"
+        help="Comma-separated list of reference files",
     )
     parser.add_argument(
-        "--workflow-type", "-w",
+        "--workflow-type",
+        "-w",
         default="feature",
         choices=["feature", "bugfix", "refactor", "docs"],
-        help="Type of workflow (default: feature)"
+        help="Type of workflow (default: feature)",
     )
     parser.add_argument(
         "--chunks",
         default="",
-        help="Comma-separated list of implementation chunks/subtasks"
+        help="Comma-separated list of implementation chunks/subtasks",
     )
     parser.add_argument(
-        "--from-json", "-j",
+        "--from-json",
+        "-j",
         default="",
-        help="Path to JSON file defining multi-phase spec (see docstring for format)"
+        help="Path to JSON file defining multi-phase spec (see docstring for format)",
     )
 
     args = parser.parse_args()
@@ -434,7 +443,9 @@ def main():
     # Parse comma-separated lists
     files_to_create = [f.strip() for f in args.files_to_create.split(",") if f.strip()]
     files_to_modify = [f.strip() for f in args.files_to_modify.split(",") if f.strip()]
-    files_to_reference = [f.strip() for f in args.files_to_reference.split(",") if f.strip()]
+    files_to_reference = [
+        f.strip() for f in args.files_to_reference.split(",") if f.strip()
+    ]
     chunks = [c.strip() for c in args.chunks.split(",") if c.strip()]
 
     try:
@@ -452,7 +463,10 @@ def main():
         else:
             # Simple single-phase spec
             if not args.description:
-                print("Error: --description is required for simple specs (or use --from-json)", file=sys.stderr)
+                print(
+                    "Error: --description is required for simple specs (or use --from-json)",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             spec_dir = create_spec(
                 project_dir=args.project_dir,

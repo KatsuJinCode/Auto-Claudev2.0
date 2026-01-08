@@ -58,7 +58,9 @@ def get_spec_dir_worktree_aware(project_dir: Path, spec_name: str) -> Path | Non
         Path to the spec directory (worktree if exists, else main), or None if not found
     """
     # Check worktree first - if it exists, it's the only source of truth
-    worktree_spec = project_dir / ".worktrees" / spec_name / ".auto-claude" / "specs" / spec_name
+    worktree_spec = (
+        project_dir / ".worktrees" / spec_name / ".auto-claude" / "specs" / spec_name
+    )
     if worktree_spec.exists():
         return worktree_spec
 

@@ -576,12 +576,14 @@ async def test_database_contents(db_path: str, database: str) -> bool:
         print()
         print("  Sample Episodic nodes:")
         try:
-            result = conn.execute("""
+            result = conn.execute(
+                """
                 MATCH (e:Episodic)
                 RETURN e.name as name, e.created_at as created
                 ORDER BY e.created_at DESC
                 LIMIT 5
-            """)
+            """
+            )
             df = result.get_as_df()
 
             if len(df) == 0:

@@ -211,6 +211,6 @@ class StatusManager:
     def get_claude_session_id(self) -> str | None:
         """Get the stored Claude CLI session ID."""
         self.read()
-        return self._status.claude_session_id if self._status.claude_session_id else None
-
-
+        return (
+            self._status.claude_session_id if self._status.claude_session_id else None
+        )

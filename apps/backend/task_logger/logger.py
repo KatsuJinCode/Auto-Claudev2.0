@@ -475,10 +475,9 @@ class TaskLogger:
         # Truncate detail for storage (max 10KB to avoid bloating JSON)
         stored_detail = detail
         if stored_detail and len(stored_detail) > 10240:
-            stored_detail = (
-                stored_detail[:10240]
-                + f"\n\n... [truncated - full output was {len(detail)} chars]"
-            )
+            stored_detail = stored_detail[
+                :10240
+            ] + f"\n\n... [truncated - full output was {len(detail)} chars]"
 
         entry = LogEntry(
             timestamp=self._timestamp(),
