@@ -4,13 +4,20 @@ Agent Session Management
 
 Handles running agent sessions and post-session processing including
 memory updates, recovery tracking, and Linear integration.
+
+Supports multiple AI agent backends:
+- Claude (via ClaudeSDKClient with rich streaming and tool callbacks)
+- Gemini (via CLI subprocess)
+- OpenCode (via CLI subprocess)
 """
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import ResultMessage
+from core.agent_runner import AgentResult, AgentTypeLiteral, run_agent
 from debug import debug, debug_detailed, debug_error, debug_section, debug_success
 from insight_extractor import extract_session_insights
 from linear_updater import (
@@ -311,29 +318,177 @@ async def post_session_processing(
         return False
 
 
-async def run_agent_session(
-    client: ClaudeSDKClient,
+async def _run_non_claude_agent_session(
     message: str,
     spec_dir: Path,
-    verbose: bool = False,
-    phase: LogPhase = LogPhase.CODING,
+    verbose: bool,
+    phase: LogPhase,
+    agent_type: AgentTypeLiteral,
+    project_dir: Optional[Path],
+    model: Optional[str],
+    session_id: Optional[str],
+    system_prompt: Optional[str],
 ) -> tuple[str, str, str | None]:
     """
-    Run a single agent session using Claude Agent SDK.
+    Run a non-Claude agent session (Gemini or OpenCode) via CLI subprocess.
+
+    This is a simplified wrapper around run_agent() from core.agent_runner
+    that integrates with the session logging and progress tracking.
 
     Args:
-        client: Claude SDK client
         message: The prompt to send
         spec_dir: Spec directory path
         verbose: Whether to show detailed output
         phase: Current execution phase for logging
+        agent_type: Agent backend ("gemini" or "opencode")
+        project_dir: Project working directory (required)
+        model: Model override (optional)
+        session_id: Session ID to resume (optional)
+        system_prompt: System prompt (optional)
+
+    Returns:
+        (status, response_text, session_id) tuple
+    """
+    if project_dir is None:
+        return "error", f"{agent_type} agent requires project_dir parameter", None
+
+    debug_section("session", f"Agent Session - {phase.value} ({agent_type.upper()})")
+    debug(
+        "session",
+        f"Starting {agent_type} agent session",
+        spec_dir=str(spec_dir),
+        project_dir=str(project_dir),
+        phase=phase.value,
+        prompt_length=len(message),
+    )
+
+    print(f"Sending prompt to {agent_type.capitalize()} agent...\n")
+
+    # Get task logger for this spec
+    task_logger = get_task_logger(spec_dir)
+
+    try:
+        # Run the agent using the unified dispatcher
+        result: AgentResult = await run_agent(
+            agent_type=agent_type,
+            prompt=message,
+            project_dir=project_dir,
+            model=model,
+            session_id=session_id,
+            system_prompt=system_prompt,
+        )
+
+        # Log output to task logger
+        if task_logger and result.output:
+            task_logger.log(
+                result.output,
+                LogEntryType.TEXT,
+                phase,
+                print_to_console=True,  # Print to console since non-Claude agents don't stream
+            )
+        elif result.output:
+            # No task logger, just print the output
+            print(result.output)
+
+        print("\n" + "-" * 70 + "\n")
+
+        if result.success:
+            debug_success(
+                "session",
+                f"{agent_type} session completed successfully",
+                response_length=len(result.output),
+                session_id=result.session_id,
+            )
+
+            # Check if build is complete
+            if is_build_complete(spec_dir):
+                return "complete", result.output, result.session_id
+
+            return "continue", result.output, result.session_id
+        else:
+            debug_error(
+                "session",
+                f"{agent_type} session failed",
+                error=result.error,
+            )
+            print(f"Error during {agent_type} session: {result.error}")
+
+            if task_logger:
+                task_logger.log_error(f"Session error: {result.error}", phase)
+
+            return "error", result.output or str(result.error), result.session_id
+
+    except Exception as e:
+        debug_error(
+            "session",
+            f"{agent_type} session error: {e}",
+            exception_type=type(e).__name__,
+        )
+        print(f"Error during {agent_type} agent session: {e}")
+
+        if task_logger:
+            task_logger.log_error(f"Session error: {e}", phase)
+
+        return "error", str(e), None
+
+
+async def run_agent_session(
+    client: Optional[ClaudeSDKClient],
+    message: str,
+    spec_dir: Path,
+    verbose: bool = False,
+    phase: LogPhase = LogPhase.CODING,
+    *,
+    agent_type: AgentTypeLiteral = "claude",
+    project_dir: Optional[Path] = None,
+    model: Optional[str] = None,
+    session_id: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+) -> tuple[str, str, str | None]:
+    """
+    Run a single agent session using the specified agent backend.
+
+    Supports multiple AI agent backends:
+    - Claude: Uses ClaudeSDKClient with rich streaming, tool callbacks, and logging
+    - Gemini: Uses gemini CLI via subprocess
+    - OpenCode: Uses opencode CLI via subprocess
+
+    Args:
+        client: Claude SDK client (required for Claude, ignored for other agents)
+        message: The prompt to send
+        spec_dir: Spec directory path
+        verbose: Whether to show detailed output
+        phase: Current execution phase for logging
+        agent_type: Agent backend to use ("claude", "gemini", or "opencode")
+        project_dir: Project directory (required for non-Claude agents)
+        model: Model override (optional, uses agent default if not specified)
+        session_id: Session ID to resume (for non-Claude agents)
+        system_prompt: System prompt (for non-Claude agents)
 
     Returns:
         (status, response_text, session_id) where:
         - status is "continue", "complete", or "error"
         - response_text is the full response text
-        - session_id is the Claude CLI session ID (for resume capability)
+        - session_id is the agent session ID (for resume capability)
     """
+    # Route to appropriate agent backend
+    if agent_type != "claude":
+        return await _run_non_claude_agent_session(
+            message=message,
+            spec_dir=spec_dir,
+            verbose=verbose,
+            phase=phase,
+            agent_type=agent_type,
+            project_dir=project_dir,
+            model=model,
+            session_id=session_id,
+            system_prompt=system_prompt,
+        )
+
+    # Claude agent - use the rich SDK implementation
+    if client is None:
+        raise ValueError("Claude agent requires a ClaudeSDKClient instance")
+
     debug_section("session", f"Agent Session - {phase.value}")
     debug(
         "session",
@@ -350,7 +505,7 @@ async def run_agent_session(
     current_tool = None
     message_count = 0
     tool_count = 0
-    session_id = None  # Will be captured from ResultMessage
+    result_session_id: str | None = None  # Will be captured from ResultMessage
 
     try:
         # Send the query
@@ -518,10 +673,10 @@ async def run_agent_session(
 
             # Handle ResultMessage (captures session_id for resume capability)
             elif isinstance(msg, ResultMessage):
-                session_id = msg.session_id
+                result_session_id = msg.session_id
                 debug(
                     "session",
-                    f"Captured session ID: {session_id}",
+                    f"Captured session ID: {result_session_id}",
                     duration_ms=msg.duration_ms,
                     num_turns=msg.num_turns,
                 )
@@ -536,9 +691,9 @@ async def run_agent_session(
                 message_count=message_count,
                 tool_count=tool_count,
                 response_length=len(response_text),
-                session_id=session_id,
+                session_id=result_session_id,
             )
-            return "complete", response_text, session_id
+            return "complete", response_text, result_session_id
 
         debug_success(
             "session",
@@ -546,9 +701,9 @@ async def run_agent_session(
             message_count=message_count,
             tool_count=tool_count,
             response_length=len(response_text),
-            session_id=session_id,
+            session_id=result_session_id,
         )
-        return "continue", response_text, session_id
+        return "continue", response_text, result_session_id
 
     except Exception as e:
         debug_error(
@@ -561,4 +716,4 @@ async def run_agent_session(
         print(f"Error during agent session: {e}")
         if task_logger:
             task_logger.log_error(f"Session error: {e}", phase)
-        return "error", str(e), session_id
+        return "error", str(e), result_session_id
