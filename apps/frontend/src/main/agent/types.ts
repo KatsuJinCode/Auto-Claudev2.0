@@ -45,6 +45,7 @@ export interface TaskExecutionOptions {
   workers?: number;
   baseBranch?: string;
   resumeSessionId?: string;  // Claude session ID to resume an interrupted session
+  agentType?: 'claude' | 'gemini' | 'opencode';  // AI agent backend to use
 }
 
 export interface SpecCreationMetadata {
@@ -66,6 +67,8 @@ export interface SpecCreationMetadata {
   // Non-auto profile - single model and thinking level
   model?: 'haiku' | 'sonnet' | 'opus';
   thinkingLevel?: 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
+  // AI agent backend to use (claude, gemini, opencode)
+  agentType?: 'claude' | 'gemini' | 'opencode';
 }
 
 export interface IdeationProgressData {

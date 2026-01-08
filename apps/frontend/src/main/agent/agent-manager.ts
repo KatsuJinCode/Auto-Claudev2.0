@@ -145,6 +145,11 @@ export class AgentManager extends EventEmitter {
       }
     }
 
+    // Pass agent type if specified (to select AI backend: claude, gemini, opencode)
+    if (metadata?.agentType) {
+      args.push('--agent', metadata.agentType);
+    }
+
     // Store context for potential restart
     this.storeTaskContext(taskId, projectPath, '', {}, true, taskDescription, specDir, metadata);
 
@@ -201,6 +206,11 @@ export class AgentManager extends EventEmitter {
     // Pass resume session ID if specified (to resume an interrupted Claude session)
     if (options.resumeSessionId) {
       args.push('--resume-session', options.resumeSessionId);
+    }
+
+    // Pass agent type if specified (to select AI backend: claude, gemini, opencode)
+    if (options.agentType) {
+      args.push('--agent', options.agentType);
     }
 
     // Note: --parallel was removed from run.py CLI - parallel execution is handled internally by the agent

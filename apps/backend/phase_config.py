@@ -4,9 +4,13 @@ Phase Configuration Module
 
 Handles model and thinking level configuration for different execution phases.
 Reads configuration from task_metadata.json and provides resolved model IDs.
+
+Also provides agent provider configuration for multi-agent support, allowing
+users to choose between different AI backends (Claude, Gemini, OpenCode).
 """
 
 import json
+from enum import Enum
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -16,6 +20,187 @@ MODEL_ID_MAP: dict[str, str] = {
     "sonnet": "claude-sonnet-4-5-20250929",
     "haiku": "claude-haiku-4-5-20251001",
 }
+
+
+# =============================================================================
+# Agent Provider Configuration (Multi-Agent Support)
+# =============================================================================
+
+
+class AgentProvider(str, Enum):
+    """
+    Supported AI agent backend providers.
+
+    Each provider has a different CLI interface and capabilities:
+    - CLAUDE: Uses Claude Agent SDK (native integration)
+    - GEMINI: Uses Gemini CLI with --resume, --model flags
+    - OPENCODE: Uses OpenCode CLI with --session, --model flags
+    """
+
+    CLAUDE = "claude"
+    GEMINI = "gemini"
+    OPENCODE = "opencode"
+
+
+# Type alias for string literals
+AgentProviderLiteral = Literal["claude", "gemini", "opencode"]
+
+
+# Default models for each agent provider
+# These are used when no model is explicitly specified
+DEFAULT_AGENT_MODELS: dict[str, str] = {
+    "claude": "claude-sonnet-4-5-20250929",
+    "gemini": "gemini-2.5-pro",
+    "opencode": "anthropic/claude-sonnet-4-20250514",
+}
+
+
+# Full model map for each agent provider
+# Maps provider to available models with their display names and identifiers
+AGENT_MODEL_MAP: dict[str, dict[str, str]] = {
+    "claude": {
+        # Claude models (Anthropic)
+        "opus": "claude-opus-4-5-20251101",
+        "sonnet": "claude-sonnet-4-5-20250929",
+        "haiku": "claude-haiku-4-5-20251001",
+        # Full model IDs also supported
+        "claude-opus-4-5-20251101": "claude-opus-4-5-20251101",
+        "claude-sonnet-4-5-20250929": "claude-sonnet-4-5-20250929",
+        "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
+    },
+    "gemini": {
+        # Gemini models (Google)
+        "gemini-2.5-pro": "gemini-2.5-pro",
+        "gemini-2.5-flash": "gemini-2.5-flash",
+        "gemini-2.0-flash": "gemini-2.0-flash",
+        "gemini-1.5-pro": "gemini-1.5-pro",
+        "gemini-1.5-flash": "gemini-1.5-flash",
+    },
+    "opencode": {
+        # OpenCode models (provider/model format)
+        # Anthropic via OpenCode
+        "anthropic/claude-sonnet-4-20250514": "anthropic/claude-sonnet-4-20250514",
+        "anthropic/claude-opus-4-20250514": "anthropic/claude-opus-4-20250514",
+        # OpenAI via OpenCode
+        "openai/gpt-4o": "openai/gpt-4o",
+        "openai/gpt-4-turbo": "openai/gpt-4-turbo",
+        "openai/o1": "openai/o1",
+        # Google via OpenCode
+        "google/gemini-2.5-pro": "google/gemini-2.5-pro",
+        "google/gemini-2.5-flash": "google/gemini-2.5-flash",
+    },
+}
+
+
+# CLI command patterns for each agent provider
+# Useful for validation and display
+AGENT_CLI_COMMANDS: dict[str, str] = {
+    "claude": "claude",
+    "gemini": "gemini",
+    "opencode": "opencode run",
+}
+
+
+# Environment variables for system prompts (per agent)
+AGENT_SYSTEM_PROMPT_ENV: dict[str, str | None] = {
+    "claude": None,  # Claude uses --system-prompt flag via SDK
+    "gemini": "GEMINI_SYSTEM_PROMPT",
+    "opencode": "OPENCODE_SYSTEM_PROMPT",
+}
+
+
+def get_default_agent() -> str:
+    """Get the default agent provider."""
+    return AgentProvider.CLAUDE.value
+
+
+def get_default_model_for_agent(agent: str) -> str:
+    """
+    Get the default model for a given agent provider.
+
+    Args:
+        agent: Agent provider name (claude, gemini, opencode)
+
+    Returns:
+        Default model identifier for the agent
+    """
+    agent_lower = agent.lower()
+    return DEFAULT_AGENT_MODELS.get(agent_lower, DEFAULT_AGENT_MODELS["claude"])
+
+
+def resolve_agent_model(agent: str, model: str | None) -> str:
+    """
+    Resolve a model identifier for a given agent provider.
+
+    If model is None, returns the default model for the agent.
+    If model is a shorthand (e.g., "opus" for Claude), resolves to full ID.
+    Otherwise returns the model as-is.
+
+    Args:
+        agent: Agent provider name (claude, gemini, opencode)
+        model: Model identifier or shorthand, or None for default
+
+    Returns:
+        Resolved model identifier
+    """
+    agent_lower = agent.lower()
+
+    # Return default if no model specified
+    if model is None:
+        return get_default_model_for_agent(agent_lower)
+
+    # Try to resolve from agent's model map
+    agent_models = AGENT_MODEL_MAP.get(agent_lower, {})
+    if model in agent_models:
+        return agent_models[model]
+
+    # Return model as-is (user may be using a custom/new model)
+    return model
+
+
+def is_valid_agent(agent: str) -> bool:
+    """
+    Check if an agent provider name is valid.
+
+    Args:
+        agent: Agent provider name to validate
+
+    Returns:
+        True if valid, False otherwise
+    """
+    try:
+        AgentProvider(agent.lower())
+        return True
+    except ValueError:
+        return False
+
+
+def get_available_agents() -> list[str]:
+    """
+    Get list of available agent provider names.
+
+    Returns:
+        List of agent provider names
+    """
+    return [p.value for p in AgentProvider]
+
+
+def get_agent_cli_command(agent: str) -> str | None:
+    """
+    Get the CLI command for an agent provider.
+
+    Args:
+        agent: Agent provider name
+
+    Returns:
+        CLI command string or None if unknown
+    """
+    return AGENT_CLI_COMMANDS.get(agent.lower())
+
+
+# =============================================================================
+# Phase Configuration (Thinking Levels & Model Selection)
+# =============================================================================
 
 # Thinking level to budget tokens mapping (None = no extended thinking)
 # Values must match auto-claude-ui/src/shared/constants/models.ts THINKING_BUDGET_MAP

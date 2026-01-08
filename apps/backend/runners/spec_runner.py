@@ -197,6 +197,13 @@ Examples:
         action="store_true",
         help="Skip human review checkpoint and automatically approve spec for building",
     )
+    parser.add_argument(
+        "--agent",
+        type=str,
+        choices=["claude", "gemini", "opencode"],
+        default=None,
+        help="AI agent backend to use (claude, gemini, opencode). Default: from project config or claude.",
+    )
 
     args = parser.parse_args()
 
@@ -333,6 +340,10 @@ Examples:
             # Pass through dev mode
             if args.dev:
                 run_cmd.append("--dev")
+
+            # Pass through agent type if specified
+            if args.agent:
+                run_cmd.extend(["--agent", args.agent])
 
             # Note: Model configuration for subsequent phases (planning, coding, qa)
             # is read from task_metadata.json by run.py, so we don't pass it here.
