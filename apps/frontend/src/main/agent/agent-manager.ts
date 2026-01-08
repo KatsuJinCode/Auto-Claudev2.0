@@ -5,6 +5,7 @@ import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
 import { AgentQueueManager } from './agent-queue';
+import { getAgentRegistry, AgentRegistryEntry } from './agent-registry';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import {
   SpecCreationMetadata,
@@ -12,6 +13,31 @@ import {
   RoadmapConfig
 } from './types';
 import type { IdeationConfig } from '../../shared/types';
+
+/**
+ * Result from discovering a running agent
+ * Contains the registry entry plus validation details
+ */
+export interface DiscoveredAgent {
+  /** The agent registry entry */
+  entry: AgentRegistryEntry;
+  /** Whether the agent was validated (PID alive and executionId matches) */
+  validated: boolean;
+  /** Reason for validation failure, if any */
+  validationError?: string;
+}
+
+/**
+ * Result from discovering all running agents
+ */
+export interface DiscoveryResult {
+  /** Agents that are confirmed to be running (PID alive + executionId valid) */
+  validAgents: AgentRegistryEntry[];
+  /** Agents that failed validation (stale entries) */
+  staleAgents: Array<{ entry: AgentRegistryEntry; reason: string }>;
+  /** Total count of agents in registry before filtering */
+  totalInRegistry: number;
+}
 
 /**
  * Main AgentManager - orchestrates agent process lifecycle
@@ -334,6 +360,54 @@ export class AgentManager extends EventEmitter {
    */
   getRunningTasks(): string[] {
     return this.state.getRunningTaskIds();
+  }
+
+  /**
+   * Discover running agents from the registry and validate them
+   *
+   * This is the primary method for reconnecting to detached agents after GUI restart.
+   * It reads all entries from the agent registry, validates each one by checking:
+   * 1. PID is alive (process.kill(pid, 0) succeeds)
+   * 2. ExecutionId in the registry matches the lockfile content
+   *
+   * The dual validation prevents false reconnections to recycled PIDs -
+   * a new process at the same PID won't have our expected executionId in its lockfile.
+   *
+   * @returns DiscoveryResult with validated and stale agent lists
+   */
+  discoverRunningAgents(): DiscoveryResult {
+    const registry = getAgentRegistry();
+
+    // Load latest data from disk in case it changed while GUI was closed
+    registry.load();
+
+    // Get all agents marked as 'running' in the registry
+    const runningAgents = registry.getRunningAgents();
+
+    const validAgents: AgentRegistryEntry[] = [];
+    const staleAgents: Array<{ entry: AgentRegistryEntry; reason: string }> = [];
+
+    // Validate each registered agent
+    for (const entry of runningAgents) {
+      const validation = registry.isAgentAlive(entry.specId);
+
+      if (validation.alive) {
+        // Agent is confirmed running with valid executionId
+        validAgents.push(entry);
+      } else {
+        // Agent failed validation - either process dead or executionId mismatch
+        staleAgents.push({
+          entry,
+          reason: validation.reason || 'Unknown validation failure'
+        });
+      }
+    }
+
+    return {
+      validAgents,
+      staleAgents,
+      totalInRegistry: runningAgents.length
+    };
   }
 
   /**

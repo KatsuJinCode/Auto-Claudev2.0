@@ -18,6 +18,11 @@ export { AgentQueueManager } from './agent-queue';
 export { AgentRegistry, getAgentRegistry, resetAgentRegistry } from './agent-registry';
 
 export type {
+  DiscoveredAgent,
+  DiscoveryResult
+} from './agent-manager';
+
+export type {
   AgentProcess,
   ExecutionProgressData,
   ProcessType,

@@ -28,5 +28,7 @@ export type {
   TaskExecutionOptions,
   SpecCreationMetadata,
   IdeationProgressData,
-  RoadmapProgressData
+  RoadmapProgressData,
+  DiscoveredAgent,
+  DiscoveryResult
 } from './agent';
