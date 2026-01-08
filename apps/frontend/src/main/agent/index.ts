@@ -34,7 +34,9 @@ export type {
   ReconnectionOptions,
   ReconnectResult,
   StopAgentOptions,
-  StopAgentResult
+  StopAgentResult,
+  LogRotationConfig,
+  LogRotationResult
 } from './agent-manager';
 
 export type {

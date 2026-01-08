@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, statSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
-import { AgentProcessManager, killAgentProcess, forceKillAgentProcess } from './agent-process';
+import { AgentProcessManager, killAgentProcess, forceKillAgentProcess, getAgentOutputDir } from './agent-process';
 import { AgentQueueManager } from './agent-queue';
 import { getAgentRegistry, AgentRegistryEntry, readHeartbeat } from './agent-registry';
 import { FileOutputStreamer, createFileOutputStreamer } from './file-output-streamer';
@@ -96,6 +96,51 @@ export interface StopAgentResult {
   /** Time in milliseconds it took to stop the agent */
   elapsedMs?: number;
 }
+
+/**
+ * Configuration for log rotation
+ */
+export interface LogRotationConfig {
+  /**
+   * Maximum size in bytes before a log file is archived
+   * Defaults to 10MB (10 * 1024 * 1024 bytes)
+   */
+  maxLogSizeBytes?: number;
+  /**
+   * Maximum age in days for completed task logs before deletion
+   * Defaults to 7 days
+   */
+  maxCompletedLogAgeDays?: number;
+  /**
+   * Working directories to scan for log files
+   * If not provided, extracts unique directories from the registry
+   */
+  workingDirectories?: string[];
+}
+
+/**
+ * Result from performing log rotation
+ */
+export interface LogRotationResult {
+  /** Number of log files archived due to size */
+  archivedCount: number;
+  /** Number of log files deleted due to age */
+  deletedCount: number;
+  /** Total bytes freed by deletion */
+  bytesFreed: number;
+  /** List of archived file paths (new archive names) */
+  archivedFiles: string[];
+  /** List of deleted file paths */
+  deletedFiles: string[];
+  /** Errors encountered during rotation (non-fatal) */
+  errors: Array<{ file: string; error: string }>;
+}
+
+/** Default maximum log file size: 10MB */
+const DEFAULT_MAX_LOG_SIZE_BYTES = 10 * 1024 * 1024;
+
+/** Default maximum age for completed task logs: 7 days */
+const DEFAULT_MAX_COMPLETED_LOG_AGE_DAYS = 7;
 
 /**
  * Completion marker patterns to detect in agent output
@@ -1519,5 +1564,267 @@ export class AgentManager extends EventEmitter {
     }, 500);
 
     return true;
+  }
+
+  /**
+   * Perform log rotation: archive large logs and delete old completed task logs
+   *
+   * This method performs two maintenance operations on agent log files:
+   * 1. **Archive large logs**: Renames log files exceeding the size threshold
+   *    (default 10MB) to {specId}.log.{timestamp} to prevent unbounded growth
+   * 2. **Delete old completed logs**: Removes log files for completed/failed tasks
+   *    older than the age threshold (default 7 days) to free disk space
+   *
+   * The method is safe to call at any time:
+   * - Running agents' logs are NOT deleted (only archived if too large)
+   * - Only logs for terminal states (completed, failed) are subject to deletion
+   * - Errors are collected but don't stop the operation
+   *
+   * @param config - Optional configuration for rotation thresholds
+   * @returns LogRotationResult with counts and details of actions taken
+   *
+   * @example
+   * // Run with defaults (10MB archive threshold, 7 day deletion age)
+   * const result = await agentManager.performLogRotation();
+   * console.log(`Archived: ${result.archivedCount}, Deleted: ${result.deletedCount}`);
+   *
+   * @example
+   * // Custom thresholds: 5MB and 3 days
+   * const result = await agentManager.performLogRotation({
+   *   maxLogSizeBytes: 5 * 1024 * 1024,
+   *   maxCompletedLogAgeDays: 3
+   * });
+   */
+  performLogRotation(config: LogRotationConfig = {}): LogRotationResult {
+    const {
+      maxLogSizeBytes = DEFAULT_MAX_LOG_SIZE_BYTES,
+      maxCompletedLogAgeDays = DEFAULT_MAX_COMPLETED_LOG_AGE_DAYS,
+      workingDirectories
+    } = config;
+
+    const result: LogRotationResult = {
+      archivedCount: 0,
+      deletedCount: 0,
+      bytesFreed: 0,
+      archivedFiles: [],
+      deletedFiles: [],
+      errors: []
+    };
+
+    // Get unique working directories from registry if not provided
+    const registry = getAgentRegistry();
+    const allEntriesRecord = registry.getAll();
+    const allEntries = Object.values(allEntriesRecord);
+    const dirsToScan = workingDirectories || this.getUniqueWorkingDirectories(allEntries);
+
+    // Create a map of outputFile -> entry for quick lookup
+    const outputFileToEntry = new Map<string, AgentRegistryEntry>();
+    for (const entry of allEntries) {
+      if (entry.outputFile) {
+        outputFileToEntry.set(path.normalize(entry.outputFile), entry);
+      }
+    }
+
+    // Process each working directory
+    for (const workingDir of dirsToScan) {
+      const outputDir = getAgentOutputDir(workingDir);
+
+      if (!existsSync(outputDir)) {
+        continue;
+      }
+
+      let files: string[];
+      try {
+        files = readdirSync(outputDir);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        result.errors.push({ file: outputDir, error: `Failed to read directory: ${errorMessage}` });
+        continue;
+      }
+
+      // Filter to only .log files (not already archived .log.{timestamp} files)
+      const logFiles = files.filter(f => f.endsWith('.log') && !f.match(/\.log\.\d+$/));
+
+      for (const logFile of logFiles) {
+        const fullPath = path.join(outputDir, logFile);
+        const normalizedPath = path.normalize(fullPath);
+
+        try {
+          const stats = statSync(fullPath);
+          const entry = outputFileToEntry.get(normalizedPath);
+
+          // Archive if file is too large (regardless of status)
+          if (stats.size > maxLogSizeBytes) {
+            const archiveResult = this.archiveLogFile(fullPath);
+            if (archiveResult.success) {
+              result.archivedCount++;
+              result.archivedFiles.push(archiveResult.archivePath!);
+            } else {
+              result.errors.push({ file: fullPath, error: archiveResult.error! });
+            }
+            continue; // Don't delete archived files
+          }
+
+          // Check if eligible for deletion (completed/failed and old enough)
+          if (this.isLogEligibleForDeletion(entry, stats, maxCompletedLogAgeDays)) {
+            const deleteResult = this.deleteLogFile(fullPath);
+            if (deleteResult.success) {
+              result.deletedCount++;
+              result.bytesFreed += stats.size;
+              result.deletedFiles.push(fullPath);
+            } else {
+              result.errors.push({ file: fullPath, error: deleteResult.error! });
+            }
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          result.errors.push({ file: fullPath, error: `Failed to process: ${errorMessage}` });
+        }
+      }
+
+      // Also clean up old archived files (*.log.{timestamp})
+      const archivedFiles = files.filter(f => f.match(/\.log\.\d+$/));
+      for (const archivedFile of archivedFiles) {
+        const fullPath = path.join(outputDir, archivedFile);
+        try {
+          const stats = statSync(fullPath);
+          const ageMs = Date.now() - stats.mtimeMs;
+          const ageDays = ageMs / (1000 * 60 * 60 * 24);
+
+          // Delete archived files older than maxCompletedLogAgeDays
+          if (ageDays > maxCompletedLogAgeDays) {
+            const deleteResult = this.deleteLogFile(fullPath);
+            if (deleteResult.success) {
+              result.deletedCount++;
+              result.bytesFreed += stats.size;
+              result.deletedFiles.push(fullPath);
+            } else {
+              result.errors.push({ file: fullPath, error: deleteResult.error! });
+            }
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          result.errors.push({ file: fullPath, error: `Failed to process archived file: ${errorMessage}` });
+        }
+      }
+    }
+
+    // Log summary
+    if (result.archivedCount > 0 || result.deletedCount > 0) {
+      console.log(
+        `[AgentManager] Log rotation complete: ` +
+        `archived ${result.archivedCount} files, ` +
+        `deleted ${result.deletedCount} files ` +
+        `(freed ${this.formatBytes(result.bytesFreed)})`
+      );
+    }
+
+    if (result.errors.length > 0) {
+      console.warn(
+        `[AgentManager] Log rotation encountered ${result.errors.length} errors:`,
+        result.errors.slice(0, 5).map(e => `${e.file}: ${e.error}`)
+      );
+    }
+
+    return result;
+  }
+
+  /**
+   * Get unique working directories from registry entries
+   */
+  private getUniqueWorkingDirectories(entries: AgentRegistryEntry[]): string[] {
+    const dirs = new Set<string>();
+    for (const entry of entries) {
+      if (entry.workingDirectory && existsSync(entry.workingDirectory)) {
+        dirs.add(entry.workingDirectory);
+      }
+    }
+    return Array.from(dirs);
+  }
+
+  /**
+   * Check if a log file is eligible for deletion
+   *
+   * A log is eligible for deletion if:
+   * 1. The associated task is in a terminal state (completed or failed), OR
+   *    there's no registry entry for it (orphaned log)
+   * 2. The file is older than maxAgeDays
+   *
+   * @param entry - Registry entry for this log (if any)
+   * @param stats - File stats
+   * @param maxAgeDays - Maximum age in days
+   * @returns true if the log should be deleted
+   */
+  private isLogEligibleForDeletion(
+    entry: AgentRegistryEntry | undefined,
+    stats: { mtimeMs: number; size: number },
+    maxAgeDays: number
+  ): boolean {
+    const ageMs = Date.now() - stats.mtimeMs;
+    const ageDays = ageMs / (1000 * 60 * 60 * 24);
+
+    // Not old enough
+    if (ageDays < maxAgeDays) {
+      return false;
+    }
+
+    // No registry entry = orphaned log file, eligible for deletion
+    if (!entry) {
+      return true;
+    }
+
+    // Only delete logs for completed or failed tasks
+    // Running agents should keep their logs
+    const terminalStatuses = ['completed', 'failed'];
+    return terminalStatuses.includes(entry.status);
+  }
+
+  /**
+   * Archive a log file by renaming it with a timestamp suffix
+   *
+   * @param logPath - Path to the log file to archive
+   * @returns Result with success status and archive path or error
+   */
+  private archiveLogFile(logPath: string): { success: boolean; archivePath?: string; error?: string } {
+    try {
+      const timestamp = Date.now();
+      const archivePath = `${logPath}.${timestamp}`;
+      renameSync(logPath, archivePath);
+
+      console.log(
+        `[AgentManager] Archived large log file: ${path.basename(logPath)} -> ${path.basename(archivePath)}`
+      );
+
+      return { success: true, archivePath };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: `Failed to archive: ${errorMessage}` };
+    }
+  }
+
+  /**
+   * Delete a log file
+   *
+   * @param logPath - Path to the log file to delete
+   * @returns Result with success status or error
+   */
+  private deleteLogFile(logPath: string): { success: boolean; error?: string } {
+    try {
+      unlinkSync(logPath);
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: `Failed to delete: ${errorMessage}` };
+    }
+  }
+
+  /**
+   * Format bytes as human-readable string
+   */
+  private formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   }
 }
