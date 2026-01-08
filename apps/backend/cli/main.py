@@ -40,6 +40,7 @@ from .utils import (
     print_banner,
     setup_environment,
 )
+from phase_config import get_available_agents, get_default_agent
 from .workspace_commands import (
     handle_cleanup_worktrees_command,
     handle_discard_command,
@@ -119,6 +120,14 @@ Environment Variables:
         type=str,
         default=None,
         help=f"Claude model to use (default: {DEFAULT_MODEL})",
+    )
+
+    parser.add_argument(
+        "--agent",
+        type=str,
+        choices=get_available_agents(),
+        default=None,
+        help=f"AI agent backend to use (default: {get_default_agent()}). Options: claude, gemini, opencode",
     )
 
     parser.add_argument(
