@@ -52,7 +52,9 @@ export type {
   AgentRegistryEntry,
   AgentStatus,
   HeartbeatData,
-  HeartbeatReadResult
+  HeartbeatReadResult,
+  HeartbeatCheckStatus,
+  HeartbeatCheckResult
 } from './agent-registry';
 
 export type {

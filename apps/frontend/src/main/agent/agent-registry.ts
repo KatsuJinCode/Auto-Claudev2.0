@@ -64,6 +64,12 @@ const REGISTRY_FILENAME = 'agents-registry.json';
 const HEARTBEAT_DIR = 'agent-heartbeat';
 
 /**
+ * Default threshold for considering a heartbeat stale (in milliseconds)
+ * If an agent hasn't updated its heartbeat within this time, it may be hung or crashed
+ */
+const HEARTBEAT_STALE_THRESHOLD_MS = 60 * 1000; // 60 seconds
+
+/**
  * Heartbeat file data format
  *
  * Heartbeat files are stored at .auto-claude/agent-heartbeat/{specId}.json
@@ -104,6 +110,32 @@ export interface HeartbeatReadResult {
   error?: string;
   /** Whether the heartbeat file exists */
   fileExists: boolean;
+}
+
+/**
+ * Heartbeat check status values
+ * - 'healthy': Heartbeat is recent (within threshold)
+ * - 'stale': Heartbeat is too old (agent may be hung or crashed)
+ * - 'missing': No heartbeat file exists (agent may not have started writing heartbeats yet)
+ * - 'error': Failed to read or parse heartbeat file
+ * - 'not_found': Agent not found in registry
+ */
+export type HeartbeatCheckStatus = 'healthy' | 'stale' | 'missing' | 'error' | 'not_found';
+
+/**
+ * Result of checking an agent's heartbeat status
+ */
+export interface HeartbeatCheckResult {
+  /** The heartbeat check status */
+  status: HeartbeatCheckStatus;
+  /** Age of the heartbeat in milliseconds (if available) */
+  ageMs?: number;
+  /** ISO timestamp of the last heartbeat (if available) */
+  lastHeartbeat?: string;
+  /** Error or reason message for non-healthy statuses */
+  reason?: string;
+  /** The heartbeat data (if successfully read) */
+  heartbeatData?: HeartbeatData;
 }
 
 /**
@@ -606,6 +638,75 @@ export class AgentRegistry {
     }
 
     return { alive: true };
+  }
+
+  /**
+   * Check the heartbeat status of an agent
+   *
+   * This method reads the agent's heartbeat file and determines if the agent
+   * is still actively running or may be hung/crashed. A heartbeat is considered
+   * stale if it's more than 60 seconds old.
+   *
+   * This provides a secondary health check beyond PID monitoring:
+   * - PID check: verifies process exists
+   * - Heartbeat check: verifies process is responsive (not hung/crashed)
+   *
+   * @param specId - The spec ID of the agent to check
+   * @param staleThresholdMs - Optional custom threshold in ms (default: 60000)
+   * @returns HeartbeatCheckResult with status and details
+   */
+  checkHeartbeat(specId: string, staleThresholdMs: number = HEARTBEAT_STALE_THRESHOLD_MS): HeartbeatCheckResult {
+    const entry = this.data.agents[specId];
+
+    // Check if agent exists in registry
+    if (!entry) {
+      return { status: 'not_found', reason: 'Agent not found in registry' };
+    }
+
+    // Read the heartbeat file
+    const heartbeatResult = readHeartbeat(entry.workingDirectory, specId);
+
+    // Handle missing heartbeat file
+    if (!heartbeatResult.fileExists) {
+      return {
+        status: 'missing',
+        reason: 'Heartbeat file does not exist (agent may not have started writing heartbeats yet)'
+      };
+    }
+
+    // Handle read errors
+    if (!heartbeatResult.success || !heartbeatResult.data) {
+      return {
+        status: 'error',
+        reason: heartbeatResult.error || 'Failed to read heartbeat file'
+      };
+    }
+
+    const heartbeatData = heartbeatResult.data;
+
+    // Calculate age of the heartbeat
+    const heartbeatTime = new Date(heartbeatData.timestamp).getTime();
+    const now = Date.now();
+    const ageMs = now - heartbeatTime;
+
+    // Check if heartbeat is stale (older than threshold)
+    if (ageMs > staleThresholdMs) {
+      return {
+        status: 'stale',
+        ageMs,
+        lastHeartbeat: heartbeatData.timestamp,
+        reason: `Heartbeat is ${Math.round(ageMs / 1000)} seconds old (threshold: ${Math.round(staleThresholdMs / 1000)}s)`,
+        heartbeatData
+      };
+    }
+
+    // Heartbeat is healthy
+    return {
+      status: 'healthy',
+      ageMs,
+      lastHeartbeat: heartbeatData.timestamp,
+      heartbeatData
+    };
   }
 
   /**
