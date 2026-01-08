@@ -50,6 +50,12 @@ export interface FileOutputStreamerEvents {
   stop: (filePath: string, finalPosition: number) => void;
   /** Emitted when end of file is reached (no more data currently) */
   eof: (position: number) => void;
+  /**
+   * Emitted when seekToEnd is used and existing content is skipped.
+   * This is useful for reconnection scenarios where you want to know
+   * how much content was skipped.
+   */
+  seeked: (skippedBytes: number, totalFileSize: number) => void;
 }
 
 /**
@@ -78,8 +84,17 @@ export interface FileOutputStreamerEvents {
  *   console.error('Streamer error:', error);
  * });
  *
+ * // For reconnection: skip existing content and only show new output
+ * streamer.on('seeked', (skippedBytes, totalSize) => {
+ *   console.log(`Reconnected: skipped ${skippedBytes} bytes of existing output`);
+ * });
+ *
  * // Start tailing from end of file (for reconnection)
- * await streamer.start('/path/to/agent.log', { seekToEnd: true });
+ * streamer.start('/path/to/agent.log', { seekToEnd: true });
+ *
+ * // Check reconnection state
+ * console.log('Skipped:', streamer.getSkippedBytes(), 'bytes');
+ * console.log('Was seekToEnd used:', streamer.wasSeekToEndUsed());
  *
  * // Later, stop the streamer
  * streamer.stop();
@@ -118,6 +133,15 @@ export class FileOutputStreamer extends EventEmitter {
   /** Flags used to open the file */
   private openFlags: number = 0;
 
+  /** Number of bytes skipped when seekToEnd was used */
+  private skippedBytes: number = 0;
+
+  /** Whether seekToEnd was used for current streaming session */
+  private usedSeekToEnd: boolean = false;
+
+  /** The initial file size when streaming started */
+  private initialFileSize: number = 0;
+
   constructor() {
     super();
     this.options = { ...FileOutputStreamer.DEFAULT_OPTIONS };
@@ -150,11 +174,24 @@ export class FileOutputStreamer extends EventEmitter {
 
     this.filePath = filePath;
     this.lineBuffer = '';
+    this.skippedBytes = 0;
+    this.usedSeekToEnd = this.options.seekToEnd;
+    this.initialFileSize = 0;
 
     // Get initial file position
     try {
       const stats = statSync(filePath);
-      this.readPosition = this.options.seekToEnd ? stats.size : 0;
+      this.initialFileSize = stats.size;
+
+      if (this.options.seekToEnd) {
+        // Seek to end: skip existing content (reconnection mode)
+        this.readPosition = stats.size;
+        this.skippedBytes = stats.size;
+      } else {
+        // Start from beginning: replay all content
+        this.readPosition = 0;
+        this.skippedBytes = 0;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to stat file ${filePath}: ${message}`);
@@ -194,6 +231,11 @@ export class FileOutputStreamer extends EventEmitter {
 
     // Emit start event
     this.emit('start', filePath, this.readPosition);
+
+    // Emit seeked event when skipping existing content (for reconnection)
+    if (this.options.seekToEnd && this.skippedBytes > 0) {
+      this.emit('seeked', this.skippedBytes, this.initialFileSize);
+    }
 
     // If not seeking to end, read existing content first
     if (!this.options.seekToEnd) {
@@ -257,6 +299,9 @@ export class FileOutputStreamer extends EventEmitter {
     this.isActive = false;
     this.filePath = null;
     this.openFlags = 0;
+    this.skippedBytes = 0;
+    this.usedSeekToEnd = false;
+    this.initialFileSize = 0;
 
     // Emit stop event
     if (filePath) {
@@ -283,6 +328,37 @@ export class FileOutputStreamer extends EventEmitter {
    */
   getFilePath(): string | null {
     return this.filePath;
+  }
+
+  /**
+   * Get the number of bytes that were skipped when seekToEnd was used.
+   *
+   * This is useful for reconnection scenarios to know how much existing
+   * content was not replayed. Returns 0 if seekToEnd was not used or
+   * if the file was empty when streaming started.
+   */
+  getSkippedBytes(): number {
+    return this.skippedBytes;
+  }
+
+  /**
+   * Check if seekToEnd was used for the current streaming session.
+   *
+   * Returns true if the streamer was started with seekToEnd: true,
+   * meaning it's in reconnection mode and skipped existing content.
+   */
+  wasSeekToEndUsed(): boolean {
+    return this.usedSeekToEnd;
+  }
+
+  /**
+   * Get the initial file size when streaming started.
+   *
+   * This can be compared with getReadPosition() to understand how much
+   * new content has been read since streaming began.
+   */
+  getInitialFileSize(): number {
+    return this.initialFileSize;
   }
 
   /**

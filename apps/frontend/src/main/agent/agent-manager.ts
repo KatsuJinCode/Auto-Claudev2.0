@@ -522,6 +522,15 @@ export class AgentManager extends EventEmitter {
       console.warn(`[AgentManager] FileOutputStreamer error for ${taskId}: ${error.message}`);
     });
 
+    // Handle seeked event - logs how much existing output was skipped
+    // This is important for reconnection scenarios to verify we're not replaying old output
+    streamer.on('seeked', (skippedBytes: number, totalFileSize: number) => {
+      console.log(
+        `[AgentManager] Reconnected to ${taskId}: skipped ${skippedBytes} bytes of existing output ` +
+        `(file size: ${totalFileSize} bytes)`
+      );
+    });
+
     // Try to start the streamer
     try {
       streamer.start(entry.outputFile, {
