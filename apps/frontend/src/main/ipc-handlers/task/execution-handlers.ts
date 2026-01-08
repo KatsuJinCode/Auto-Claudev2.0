@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
-import type { IPCResult, TaskStartOptions, TaskStatus } from '../../../shared/types';
+import type { IPCResult, TaskStartOptions, TaskStatus, AgentType } from '../../../shared/types';
 import path from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { spawnSync } from 'child_process';
@@ -9,6 +9,26 @@ import { fileWatcher } from '../../file-watcher';
 import { findTaskAndProject } from './shared';
 import { checkGitStatus } from '../../project-initializer';
 import { getClaudeProfileManager } from '../../claude-profile-manager';
+
+/**
+ * Resolve the agent type to use for a task.
+ * Priority: options > project settings > default (claude)
+ */
+function resolveAgentType(
+  options?: TaskStartOptions,
+  projectDefaultAgent?: string
+): AgentType | undefined {
+  // Priority 1: Explicit option passed in
+  if (options?.agentType) {
+    return options.agentType;
+  }
+  // Priority 2: Project settings default
+  if (projectDefaultAgent && ['claude', 'gemini', 'opencode'].includes(projectDefaultAgent)) {
+    return projectDefaultAgent as AgentType;
+  }
+  // Default: undefined (let backend use its default - claude)
+  return undefined;
+}
 
 /**
  * Helper function to check subtask completion status
@@ -70,8 +90,8 @@ export function registerTaskExecutionHandlers(
    */
   ipcMain.on(
     IPC_CHANNELS.TASK_START,
-    (_, taskId: string, _options?: TaskStartOptions) => {
-      console.warn('[TASK_START] Received request for taskId:', taskId);
+    (_, taskId: string, options?: TaskStartOptions) => {
+      console.warn('[TASK_START] Received request for taskId:', taskId, 'options:', options);
       const mainWindow = getMainWindow();
       if (!mainWindow) {
         console.warn('[TASK_START] No main window found');
@@ -149,14 +169,26 @@ export function registerTaskExecutionHandlers(
       // Get base branch from project settings for worktree creation
       const baseBranch = project.settings?.mainBranch;
 
+      // Resolve agent type from options or project settings
+      const agentType = resolveAgentType(options, project.settings?.defaultAgent);
+      if (agentType) {
+        console.warn('[TASK_START] Using agent:', agentType);
+      }
+
       if (needsSpecCreation) {
         // No spec file - need to run spec_runner.py to create the spec
         const taskDescription = task.description || task.title;
         console.warn('[TASK_START] Starting spec creation for:', task.specId, 'in:', specDir);
 
+        // Prepare metadata with agentType
+        const metadataWithAgent = {
+          ...task.metadata,
+          agentType  // Add agentType to metadata
+        };
+
         // Start spec creation process - pass the existing spec directory
         // so spec_runner uses it instead of creating a new one
-        agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDir, task.metadata);
+        agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDir, metadataWithAgent);
       } else if (needsImplementation) {
         // Spec exists but no subtasks - run run.py to create implementation plan and execute
         // Read the spec.md to get the task description
@@ -177,7 +209,8 @@ export function registerTaskExecutionHandlers(
           {
             parallel: false,  // Sequential for planning phase
             workers: 1,
-            baseBranch
+            baseBranch,
+            agentType  // Pass selected agent backend
           }
         );
       } else {
@@ -192,7 +225,8 @@ export function registerTaskExecutionHandlers(
           {
             parallel: false,
             workers: 1,
-            baseBranch
+            baseBranch,
+            agentType  // Pass selected agent backend
           }
         );
       }
@@ -504,6 +538,12 @@ export function registerTaskExecutionHandlers(
           // Start file watcher for this task
           fileWatcher.watch(taskId, specDir);
 
+          // Resolve agent type from project settings (no options available for status update)
+          const agentType = resolveAgentType(undefined, project.settings?.defaultAgent);
+          if (agentType) {
+            console.warn('[TASK_UPDATE_STATUS] Using agent:', agentType);
+          }
+
           // Check if spec.md exists
           const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
           const hasSpec = existsSync(specFilePath);
@@ -516,7 +556,13 @@ export function registerTaskExecutionHandlers(
             // No spec file - need to run spec_runner.py to create the spec
             const taskDescription = task.description || task.title;
             console.warn('[TASK_UPDATE_STATUS] Starting spec creation for:', task.specId);
-            agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDir, task.metadata);
+
+            // Prepare metadata with agentType
+            const metadataWithAgent = {
+              ...task.metadata,
+              agentType
+            };
+            agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDir, metadataWithAgent);
           } else if (needsImplementation) {
             // Spec exists but no subtasks - run run.py to create implementation plan and execute
             console.warn('[TASK_UPDATE_STATUS] Starting task execution (no subtasks) for:', task.specId);
@@ -526,7 +572,8 @@ export function registerTaskExecutionHandlers(
               task.specId,
               {
                 parallel: false,
-                workers: 1
+                workers: 1,
+                agentType
               }
             );
           } else {
@@ -539,7 +586,8 @@ export function registerTaskExecutionHandlers(
               task.specId,
               {
                 parallel: false,
-                workers: 1
+                workers: 1,
+                agentType
               }
             );
           }
@@ -811,6 +859,12 @@ export function registerTaskExecutionHandlers(
             const specDirForWatcher = getWorktreeAwareSpecDir(project.path, autoBuildDir, task.specId);
             fileWatcher.watch(taskId, specDirForWatcher);
 
+            // Resolve agent type from project settings
+            const agentType = resolveAgentType(undefined, project.settings?.defaultAgent);
+            if (agentType) {
+              console.warn(`[Recovery] Using agent: ${agentType}`);
+            }
+
             // Check if spec.md exists to determine whether to run spec creation or task execution
             const specFilePath = path.join(specDirForWatcher, AUTO_BUILD_PATHS.SPEC_FILE);
             const hasSpec = existsSync(specFilePath);
@@ -820,7 +874,13 @@ export function registerTaskExecutionHandlers(
               // No spec file - need to run spec_runner.py to create the spec
               const taskDescription = task.description || task.title;
               console.warn(`[Recovery] Starting spec creation for: ${task.specId}`);
-              agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDirForWatcher, task.metadata);
+
+              // Prepare metadata with agentType
+              const metadataWithAgent = {
+                ...task.metadata,
+                agentType
+              };
+              agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDirForWatcher, metadataWithAgent);
             } else {
               // Spec exists - run task execution
               // Try to read stored Claude session ID from .auto-claude-status for resume capability
@@ -847,7 +907,8 @@ export function registerTaskExecutionHandlers(
                 {
                   parallel: false,
                   workers: 1,
-                  resumeSessionId  // Resume the interrupted session if available
+                  resumeSessionId,  // Resume the interrupted session if available
+                  agentType  // Pass selected agent backend
                 }
               );
             }
