@@ -7,7 +7,10 @@ Provides a consistent abstraction layer that normalizes differences between
 CLI tools while maintaining all functionality.
 """
 
+import asyncio
 import logging
+import os
+import shutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -248,6 +251,10 @@ async def _run_claude(
         )
 
 
+# Default model for Gemini agent
+DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
+
+
 async def _run_gemini(
     prompt: str,
     project_dir: Path,
@@ -258,13 +265,171 @@ async def _run_gemini(
     """
     Run a Gemini agent session using the Gemini CLI.
 
-    To be implemented in subtask 1.3.
+    This function invokes the Gemini CLI tool via subprocess to interact with
+    Google's Gemini AI models. It supports session resumption and model selection
+    through CLI flags.
+
+    Args:
+        prompt: The message to send to Gemini
+        project_dir: Working directory for the agent session
+        model: Gemini model to use (defaults to gemini-2.5-pro)
+        session_id: Optional session ID to resume a previous conversation
+        system_prompt: System prompt (set via GEMINI_SYSTEM_PROMPT env var)
+
+    Returns:
+        AgentResult containing success status, output text, session ID, and any error
+
+    Note:
+        The Gemini CLI must be installed and available in PATH.
+        System prompts are passed via environment variable since Gemini CLI
+        doesn't support a --system-prompt flag.
+
+    Example:
+        >>> result = await _run_gemini(
+        ...     prompt="Create a hello world function in Python",
+        ...     project_dir=Path("/my/project"),
+        ... )
+        >>> if result.success:
+        ...     print(result.output)
     """
-    return AgentResult(
-        success=False,
-        output="",
-        error="Gemini runner not yet implemented (subtask 1.3)",
-    )
+    # Check if gemini CLI is available
+    gemini_path = shutil.which("gemini")
+    if not gemini_path:
+        return AgentResult(
+            success=False,
+            output="",
+            error="Gemini CLI not found. Please install it and ensure it's in your PATH.",
+        )
+
+    resolved_model = model or DEFAULT_GEMINI_MODEL
+
+    # Build the command
+    cmd = ["gemini"]
+
+    # Add model flag
+    cmd.extend(["--model", resolved_model])
+
+    # Add resume flag if session_id provided
+    if session_id:
+        cmd.extend(["--resume", session_id])
+
+    # Add the prompt
+    cmd.append(prompt)
+
+    # Set up environment with system prompt if provided
+    env = os.environ.copy()
+    if system_prompt:
+        env["GEMINI_SYSTEM_PROMPT"] = system_prompt
+
+    output_text = ""
+    result_session_id: str | None = None
+
+    try:
+        logger.debug(
+            "Running Gemini CLI: cmd=%s, cwd=%s",
+            " ".join(cmd),
+            project_dir.resolve(),
+        )
+
+        # Run the gemini command asynchronously
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(project_dir.resolve()),
+            env=env,
+        )
+
+        stdout, stderr = await process.communicate()
+
+        # Decode output
+        output_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+
+        # Check for success
+        if process.returncode == 0:
+            # Try to extract session ID from output if present
+            # Gemini CLI may output session info in a specific format
+            # For now, we'll attempt to parse it from the output
+            result_session_id = _extract_gemini_session_id(output_text, stderr_text)
+
+            logger.debug(
+                "Gemini session completed: session_id=%s, return_code=%s",
+                result_session_id,
+                process.returncode,
+            )
+
+            return AgentResult(
+                success=True,
+                output=output_text,
+                session_id=result_session_id,
+            )
+        else:
+            error_msg = f"Gemini CLI returned non-zero exit code: {process.returncode}"
+            if stderr_text:
+                error_msg += f"\nStderr: {stderr_text}"
+
+            logger.warning(error_msg)
+
+            return AgentResult(
+                success=False,
+                output=output_text,  # Include any partial output
+                session_id=result_session_id,
+                error=error_msg,
+            )
+
+    except FileNotFoundError:
+        error_msg = "Gemini CLI executable not found"
+        logger.exception(error_msg)
+        return AgentResult(
+            success=False,
+            output="",
+            error=error_msg,
+        )
+    except Exception as e:
+        error_msg = f"Gemini session failed: {e}"
+        logger.exception(error_msg)
+        return AgentResult(
+            success=False,
+            output=output_text,  # Include any partial output
+            session_id=result_session_id,
+            error=error_msg,
+        )
+
+
+def _extract_gemini_session_id(stdout: str, stderr: str) -> str | None:
+    """
+    Extract session ID from Gemini CLI output.
+
+    The Gemini CLI may output session information in various formats.
+    This function attempts to parse and extract the session ID for
+    later resumption.
+
+    Args:
+        stdout: Standard output from the Gemini CLI
+        stderr: Standard error from the Gemini CLI
+
+    Returns:
+        The extracted session ID, or None if not found
+    """
+    import re
+
+    # Common patterns for session IDs in CLI output
+    # Pattern 1: "Session ID: <id>" or "session_id: <id>"
+    patterns = [
+        r"[Ss]ession[_\s][Ii][Dd]:\s*([a-zA-Z0-9_-]+)",
+        r"--resume\s+([a-zA-Z0-9_-]+)",
+        r'"session_id":\s*"([a-zA-Z0-9_-]+)"',
+    ]
+
+    # Check both stdout and stderr
+    for text in [stdout, stderr]:
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return match.group(1)
+
+    return None
 
 
 async def _run_opencode(
