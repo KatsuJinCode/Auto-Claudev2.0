@@ -86,3 +86,165 @@ export function sanitizeMarkdownForDisplay(text: string, maxLength: number = 200
 
   return sanitized;
 }
+
+/**
+ * Threshold in milliseconds for considering activity as stale (5 minutes)
+ */
+export const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/**
+ * Threshold in milliseconds for clock skew tolerance (5 minutes in future)
+ */
+export const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * Result type for elapsed time calculation
+ */
+export interface ElapsedTimeResult {
+  /** Formatted elapsed time string (e.g., "2m 15s") */
+  formatted: string;
+  /** Raw elapsed time in milliseconds */
+  elapsedMs: number;
+  /** Whether the timestamp is considered stale (>5 minutes old) */
+  isStale: boolean;
+  /** Whether the timestamp appears invalid (in future beyond tolerance) */
+  isInvalid: boolean;
+}
+
+/**
+ * Calculate elapsed time from a log timestamp and format as duration.
+ * Used for displaying how long since the last log activity occurred.
+ *
+ * @param timestamp The log timestamp to calculate elapsed time from
+ * @param now Optional current time for testing (defaults to Date.now())
+ * @returns ElapsedTimeResult with formatted string and metadata
+ *
+ * @example
+ * // 2 minutes and 15 seconds ago
+ * formatElapsedFromTimestamp(new Date(Date.now() - 135000)) // { formatted: "2m 15s", elapsedMs: 135000, ... }
+ *
+ * @example
+ * // Just now
+ * formatElapsedFromTimestamp(new Date()) // { formatted: "0s", elapsedMs: ~0, ... }
+ *
+ * @example
+ * // Stale timestamp (>5 min)
+ * formatElapsedFromTimestamp(new Date(Date.now() - 600000)) // { formatted: "10m 0s", isStale: true, ... }
+ */
+export function formatElapsedFromTimestamp(
+  timestamp: Date | string | null | undefined,
+  now?: number
+): ElapsedTimeResult {
+  const currentTime = now ?? Date.now();
+
+  // Handle null/undefined timestamps
+  if (!timestamp) {
+    return {
+      formatted: '--',
+      elapsedMs: 0,
+      isStale: true,
+      isInvalid: true
+    };
+  }
+
+  // Parse timestamp if it's a string
+  const timestampDate = timestamp instanceof Date ? timestamp : new Date(timestamp);
+
+  // Validate timestamp is a valid date
+  if (isNaN(timestampDate.getTime())) {
+    return {
+      formatted: '--',
+      elapsedMs: 0,
+      isStale: true,
+      isInvalid: true
+    };
+  }
+
+  const elapsedMs = currentTime - timestampDate.getTime();
+
+  // Check for clock skew (timestamp too far in future)
+  if (elapsedMs < -CLOCK_SKEW_TOLERANCE_MS) {
+    return {
+      formatted: '--',
+      elapsedMs: elapsedMs,
+      isStale: false,
+      isInvalid: true
+    };
+  }
+
+  // Handle small negative values (minor clock skew) by treating as 0
+  const adjustedElapsedMs = Math.max(0, elapsedMs);
+
+  // Check if stale (>5 minutes)
+  const isStale = adjustedElapsedMs > STALE_THRESHOLD_MS;
+
+  // Format the elapsed time
+  const formatted = formatDuration(adjustedElapsedMs);
+
+  return {
+    formatted,
+    elapsedMs: adjustedElapsedMs,
+    isStale,
+    isInvalid: false
+  };
+}
+
+/**
+ * Format a duration in milliseconds as a human-readable string.
+ *
+ * @param ms Duration in milliseconds
+ * @returns Formatted duration string (e.g., "2m 15s", "1h 30m", "5s")
+ *
+ * @example
+ * formatDuration(5000) // "5s"
+ * formatDuration(135000) // "2m 15s"
+ * formatDuration(5400000) // "1h 30m"
+ * formatDuration(90061000) // "1d 1h 1m"
+ */
+export function formatDuration(ms: number): string {
+  if (ms < 0) return '0s';
+
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  const remainingHours = hours % 24;
+  const remainingMinutes = minutes % 60;
+  const remainingSeconds = seconds % 60;
+
+  // Build parts array based on what units are present
+  const parts: string[] = [];
+
+  if (days > 0) {
+    parts.push(`${days}d`);
+  }
+  if (hours > 0 || days > 0) {
+    if (days > 0) {
+      // When showing days, include hours
+      parts.push(`${remainingHours}h`);
+    } else {
+      parts.push(`${hours}h`);
+    }
+  }
+  if (minutes > 0 || hours > 0 || days > 0) {
+    if (hours > 0 || days > 0) {
+      // When showing hours/days, include minutes
+      parts.push(`${remainingMinutes}m`);
+    } else {
+      parts.push(`${minutes}m`);
+    }
+  }
+
+  // Only show seconds if less than 1 hour (for cleaner display of long durations)
+  if (hours === 0 && days === 0) {
+    if (minutes > 0) {
+      parts.push(`${remainingSeconds}s`);
+    } else {
+      // Just seconds (or 0s)
+      parts.push(`${seconds}s`);
+    }
+  }
+
+  return parts.join(' ') || '0s';
+}
