@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban } from 'lucide-react';
+import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, Activity } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -23,7 +23,7 @@ import {
   EXECUTION_PHASE_LABELS,
   EXECUTION_PHASE_BADGE_COLORS
 } from '../../shared/constants';
-import { useTaskStore, startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks } from '../stores/task-store';
+import { useTaskStore, startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks, isActivityRecent } from '../stores/task-store';
 import type { Task, TaskCategory, ReviewReason } from '../../shared/types';
 
 // Category icon mapping
@@ -71,6 +71,9 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);
+
+  // Check if task has recent log activity (for Active badge)
+  const isActive = isRunning && !isStuck && isActivityRecent(logActivity?.lastLogTimestamp);
 
   // Check if task is stuck (status says in_progress but no actual process)
   // Add a grace period to avoid false positives during process spawn
@@ -255,6 +258,16 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
               >
                 <Archive className="h-2.5 w-2.5" />
                 Archived
+              </Badge>
+            )}
+            {/* Activity indicator - shows when agent is actively processing (recent log activity) */}
+            {isActive && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-success/10 text-success border-success/30 activity-indicator-dot"
+              >
+                <Activity className="h-2.5 w-2.5" />
+                Active
               </Badge>
             )}
             {/* Execution phase badge - shown when actively running */}
