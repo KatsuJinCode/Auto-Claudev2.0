@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, Activity } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, Activity, Moon } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -74,6 +74,15 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
 
   // Check if task has recent log activity (for Active badge)
   const isActive = isRunning && !isStuck && isActivityRecent(logActivity?.lastLogTimestamp);
+
+  // Check if task is running but has no recent activity (for Inactive badge)
+  // This indicates the agent may be stalled or waiting - shows after threshold passes
+  const isInactive = useMemo(() => {
+    if (!isRunning || isStuck) return false;
+    // Only show inactive if we have some log activity history but it's stale
+    if (!logActivity?.lastLogTimestamp) return false;
+    return !isActivityRecent(logActivity.lastLogTimestamp);
+  }, [isRunning, isStuck, logActivity?.lastLogTimestamp]);
 
   // Check if task is stuck (status says in_progress but no actual process)
   // Add a grace period to avoid false positives during process spawn
@@ -270,6 +279,17 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
               >
                 <Activity className="h-2.5 w-2.5" />
                 Active
+              </Badge>
+            )}
+            {/* Inactive indicator - shows when task is running but no recent log activity (stale) */}
+            {isInactive && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-muted text-muted-foreground border-border"
+                title="No recent activity detected - agent may be waiting or stalled"
+              >
+                <Moon className="h-2.5 w-2.5" />
+                Inactive
               </Badge>
             )}
             {/* Execution phase badge - shown when actively running */}

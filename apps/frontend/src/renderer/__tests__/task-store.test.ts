@@ -3,7 +3,13 @@
  * Tests Zustand store for task state management
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useTaskStore } from '../stores/task-store';
+import {
+  useTaskStore,
+  parseTimestamp,
+  validateTimestamp,
+  LOG_ACTIVITY_DEBOUNCE_MS,
+  CLOCK_SKEW_TOLERANCE_MS
+} from '../stores/task-store';
 import type { Task, TaskStatus, ImplementationPlan } from '../../shared/types';
 
 // Helper to create test tasks
@@ -721,6 +727,160 @@ describe('Task Store', () => {
       });
 
       expect(useTaskStore.getState().getIsTaskActivityRecent('task-1')).toBe(false);
+    });
+
+    it('should fallback to previous timestamp when parsing fails', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      // First, set a valid timestamp
+      const validTimestamp = new Date();
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        message: 'Initial activity',
+        timestamp: validTimestamp
+      });
+
+      // Verify initial state
+      const initialActivity = useTaskStore.getState().getLogActivity('task-1');
+      expect(initialActivity?.lastLogTimestamp.getTime()).toBe(validTimestamp.getTime());
+
+      // Now update with invalid timestamp - should keep previous
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'qa_review',
+        message: 'QA activity',
+        timestamp: 'invalid-timestamp' as unknown as Date
+      });
+
+      // Should keep the previous valid timestamp
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity?.lastLogTimestamp.getTime()).toBe(validTimestamp.getTime());
+      // But message should update
+      expect(activity?.lastActivityLog).toBe('QA activity');
+    });
+
+    it('should debounce rapid updates when content unchanged', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const timestamp1 = new Date();
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        message: 'Same message',
+        timestamp: timestamp1
+      });
+
+      const firstUpdate = useTaskStore.getState().getLogActivity('task-1')?.localUpdatedAt;
+      expect(firstUpdate).toBeDefined();
+
+      // Rapid update with same content - should be debounced
+      const timestamp2 = new Date(Date.now() + 100); // 100ms later
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        message: 'Same message',
+        timestamp: timestamp2
+      });
+
+      // localUpdatedAt should not change due to debounce
+      const secondUpdate = useTaskStore.getState().getLogActivity('task-1')?.localUpdatedAt;
+      expect(secondUpdate?.getTime()).toBe(firstUpdate?.getTime());
+    });
+
+    it('should update despite debounce when content changes', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const timestamp1 = new Date();
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        message: 'First message',
+        timestamp: timestamp1
+      });
+
+      const firstUpdate = useTaskStore.getState().getLogActivity('task-1')?.localUpdatedAt;
+      expect(firstUpdate).toBeDefined();
+
+      // Rapid update with DIFFERENT content - should NOT be debounced
+      const timestamp2 = new Date(Date.now() + 100); // 100ms later
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        message: 'Different message',
+        timestamp: timestamp2
+      });
+
+      // Message should be updated even though within debounce window
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity?.lastActivityLog).toBe('Different message');
+    });
+  });
+
+  describe('parseTimestamp', () => {
+    it('should parse valid Date object', () => {
+      const date = new Date('2024-01-01T00:00:00Z');
+      expect(parseTimestamp(date)).toEqual(date);
+    });
+
+    it('should parse valid ISO string', () => {
+      const isoString = '2024-01-01T00:00:00.000Z';
+      const result = parseTimestamp(isoString);
+      expect(result).toBeInstanceOf(Date);
+      expect(result?.toISOString()).toBe(isoString);
+    });
+
+    it('should parse epoch milliseconds', () => {
+      const epoch = 1704067200000; // 2024-01-01T00:00:00Z
+      const result = parseTimestamp(epoch);
+      expect(result).toBeInstanceOf(Date);
+      expect(result?.getTime()).toBe(epoch);
+    });
+
+    it('should return undefined for null', () => {
+      expect(parseTimestamp(null)).toBeUndefined();
+    });
+
+    it('should return undefined for undefined', () => {
+      expect(parseTimestamp(undefined)).toBeUndefined();
+    });
+
+    it('should return undefined for invalid date string', () => {
+      expect(parseTimestamp('not-a-date')).toBeUndefined();
+    });
+
+    it('should return undefined for Invalid Date object', () => {
+      expect(parseTimestamp(new Date('invalid'))).toBeUndefined();
+    });
+  });
+
+  describe('validateTimestamp', () => {
+    it('should return valid timestamp', () => {
+      const timestamp = new Date();
+      expect(validateTimestamp(timestamp)).toEqual(timestamp);
+    });
+
+    it('should return undefined for null', () => {
+      expect(validateTimestamp(undefined)).toBeUndefined();
+    });
+
+    it('should return undefined for Invalid Date', () => {
+      expect(validateTimestamp(new Date('invalid'))).toBeUndefined();
+    });
+
+    it('should reject timestamp beyond clock skew tolerance', () => {
+      const future = new Date(Date.now() + CLOCK_SKEW_TOLERANCE_MS + 60000);
+      expect(validateTimestamp(future)).toBeUndefined();
+    });
+
+    it('should accept timestamp within clock skew tolerance', () => {
+      const nearFuture = new Date(Date.now() + CLOCK_SKEW_TOLERANCE_MS - 1000);
+      expect(validateTimestamp(nearFuture)).toBeDefined();
+    });
+
+    it('should accept past timestamps', () => {
+      const past = new Date(Date.now() - 60000);
+      expect(validateTimestamp(past)).toEqual(past);
     });
   });
 });

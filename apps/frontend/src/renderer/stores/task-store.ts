@@ -23,6 +23,20 @@ export interface LogActivityState {
 export const ACTIVITY_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
 /**
+ * Minimum interval between log activity updates to prevent UI flicker.
+ * Rapid updates within this window will be ignored.
+ * 500ms = 0.5 seconds
+ */
+export const LOG_ACTIVITY_DEBOUNCE_MS = 500;
+
+/**
+ * Maximum allowed clock skew tolerance for timestamps.
+ * Timestamps beyond this in the future will be rejected.
+ * 5 minutes = 300000ms
+ */
+export const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
  * Check if a log timestamp is considered recent (within threshold).
  * @param timestamp - The log timestamp to check
  * @param thresholdMs - Optional custom threshold (defaults to ACTIVITY_STALE_THRESHOLD_MS)
@@ -33,6 +47,61 @@ export function isActivityRecent(timestamp: Date | undefined, thresholdMs = ACTI
   const now = Date.now();
   const elapsed = now - timestamp.getTime();
   return elapsed < thresholdMs;
+}
+
+/**
+ * Safely parse a timestamp from various input formats.
+ * Returns undefined if parsing fails, allowing caller to fallback.
+ * @param input - Date object, ISO string, number (epoch ms), or undefined
+ * @returns Parsed Date or undefined if invalid
+ */
+export function parseTimestamp(input: Date | string | number | undefined | null): Date | undefined {
+  if (!input) return undefined;
+
+  try {
+    if (input instanceof Date) {
+      // Validate Date object
+      return isNaN(input.getTime()) ? undefined : input;
+    }
+
+    if (typeof input === 'number') {
+      // Epoch milliseconds
+      const date = new Date(input);
+      return isNaN(date.getTime()) ? undefined : date;
+    }
+
+    if (typeof input === 'string') {
+      // Try ISO string or other date formats
+      const date = new Date(input);
+      return isNaN(date.getTime()) ? undefined : date;
+    }
+  } catch {
+    // Swallow parsing errors
+  }
+
+  return undefined;
+}
+
+/**
+ * Validate a timestamp for use in log activity tracking.
+ * Rejects invalid dates and timestamps too far in the future.
+ * @param timestamp - The timestamp to validate
+ * @param toleranceMs - Max allowed future time (default: CLOCK_SKEW_TOLERANCE_MS)
+ * @returns The timestamp if valid, undefined otherwise
+ */
+export function validateTimestamp(timestamp: Date | undefined, toleranceMs = CLOCK_SKEW_TOLERANCE_MS): Date | undefined {
+  if (!timestamp) return undefined;
+  if (isNaN(timestamp.getTime())) return undefined;
+
+  const now = Date.now();
+  const maxAllowed = now + toleranceMs;
+
+  // Reject timestamps more than tolerance in the future
+  if (timestamp.getTime() > maxAllowed) {
+    return undefined;
+  }
+
+  return timestamp;
 }
 
 interface TaskState {
@@ -300,36 +369,41 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
       const canonicalId = task.id;
 
-      // Parse timestamp from progress (can be Date, ISO string, or undefined)
-      let timestamp: Date | undefined;
-      if (progress.timestamp) {
-        timestamp = progress.timestamp instanceof Date
-          ? progress.timestamp
-          : new Date(progress.timestamp);
+      // Get existing activity for fallback and debouncing
+      const existingActivity = state.logActivity.get(canonicalId);
 
-        // Validate timestamp - reject invalid or future dates (clock skew protection)
-        if (isNaN(timestamp.getTime())) {
-          timestamp = undefined;
-        } else {
-          const now = Date.now();
-          const fiveMinutesFromNow = now + 5 * 60 * 1000;
-          // Reject timestamps more than 5 minutes in the future
-          if (timestamp.getTime() > fiveMinutesFromNow) {
-            timestamp = undefined;
-          }
-        }
+      // Parse and validate timestamp using helpers
+      const parsedTimestamp = parseTimestamp(progress.timestamp);
+      const validatedTimestamp = validateTimestamp(parsedTimestamp);
+
+      // Determine final timestamp: use validated if available, fallback to existing
+      let timestamp: Date | undefined = validatedTimestamp;
+      if (!timestamp && existingActivity) {
+        // Parsing failed - keep previous good timestamp (edge case: parsing errors)
+        timestamp = existingActivity.lastLogTimestamp;
       }
 
       // Update log activity if we have a valid timestamp
       let newLogActivity = state.logActivity;
       if (timestamp) {
-        newLogActivity = new Map(state.logActivity);
+        const now = Date.now();
         const logContent = progress.message || progress.currentSubtask || `Phase: ${progress.phase}`;
-        newLogActivity.set(canonicalId, {
-          lastLogTimestamp: timestamp,
-          lastActivityLog: logContent,
-          localUpdatedAt: new Date()
-        });
+
+        // Debounce check: only update if sufficient time has passed since last update
+        // This prevents UI flicker from rapid log updates (edge case: rapid updates)
+        const shouldUpdate = !existingActivity ||
+          (now - existingActivity.localUpdatedAt.getTime()) >= LOG_ACTIVITY_DEBOUNCE_MS ||
+          // Always update if the log content changed meaningfully
+          existingActivity.lastActivityLog !== logContent;
+
+        if (shouldUpdate) {
+          newLogActivity = new Map(state.logActivity);
+          newLogActivity.set(canonicalId, {
+            lastLogTimestamp: timestamp,
+            lastActivityLog: logContent,
+            localUpdatedAt: new Date()
+          });
+        }
       }
 
       // Update execution progress on the task
