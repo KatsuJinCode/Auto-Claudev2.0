@@ -67,6 +67,16 @@ interface TaskState {
   getLogActivity: (taskId: string) => LogActivityState | undefined;
   /** Check if a task has recent activity (within threshold) */
   getIsTaskActivityRecent: (taskId: string) => boolean;
+
+  // Reconciliation
+  /**
+   * Reconcile task state from execution progress data.
+   * This is the primary method for updating task state from IPC events,
+   * atomically updating both executionProgress and logActivity.
+   * @param taskId - The task ID to update
+   * @param progress - Execution progress data including optional timestamp
+   */
+  reconcileTaskState: (taskId: string, progress: Partial<ExecutionProgress>) => void;
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
@@ -280,7 +290,71 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const activity = state.getLogActivity(taskId);
     if (!activity) return false;
     return isActivityRecent(activity.lastLogTimestamp);
-  }
+  },
+
+  reconcileTaskState: (taskId, progress) =>
+    set((state) => {
+      // Find the task to get canonical ID
+      const task = state.tasks.find((t) => t.id === taskId || t.specId === taskId);
+      if (!task) return state;
+
+      const canonicalId = task.id;
+
+      // Parse timestamp from progress (can be Date, ISO string, or undefined)
+      let timestamp: Date | undefined;
+      if (progress.timestamp) {
+        timestamp = progress.timestamp instanceof Date
+          ? progress.timestamp
+          : new Date(progress.timestamp);
+
+        // Validate timestamp - reject invalid or future dates (clock skew protection)
+        if (isNaN(timestamp.getTime())) {
+          timestamp = undefined;
+        } else {
+          const now = Date.now();
+          const fiveMinutesFromNow = now + 5 * 60 * 1000;
+          // Reject timestamps more than 5 minutes in the future
+          if (timestamp.getTime() > fiveMinutesFromNow) {
+            timestamp = undefined;
+          }
+        }
+      }
+
+      // Update log activity if we have a valid timestamp
+      let newLogActivity = state.logActivity;
+      if (timestamp) {
+        newLogActivity = new Map(state.logActivity);
+        const logContent = progress.message || progress.currentSubtask || `Phase: ${progress.phase}`;
+        newLogActivity.set(canonicalId, {
+          lastLogTimestamp: timestamp,
+          lastActivityLog: logContent,
+          localUpdatedAt: new Date()
+        });
+      }
+
+      // Update execution progress on the task
+      const existingProgress = task.executionProgress || {
+        phase: 'idle' as ExecutionPhase,
+        phaseProgress: 0,
+        overallProgress: 0
+      };
+
+      return {
+        tasks: state.tasks.map((t) => {
+          if (t.id !== canonicalId) return t;
+
+          return {
+            ...t,
+            executionProgress: {
+              ...existingProgress,
+              ...progress
+            },
+            updatedAt: new Date()
+          };
+        }),
+        logActivity: newLogActivity
+      };
+    })
 }));
 
 /**

@@ -55,7 +55,8 @@ describe('Task Store', () => {
       tasks: [],
       selectedTaskId: null,
       isLoading: false,
-      error: null
+      error: null,
+      logActivity: new Map()
     });
   });
 
@@ -510,6 +511,216 @@ describe('Task Store', () => {
         expect(tasks).toHaveLength(1);
         expect(tasks[0].status).toBe(status);
       });
+    });
+  });
+
+  describe('reconcileTaskState', () => {
+    it('should update execution progress for a task', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        phaseProgress: 50,
+        overallProgress: 25
+      });
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.executionProgress?.phase).toBe('coding');
+      expect(task.executionProgress?.phaseProgress).toBe(50);
+      expect(task.executionProgress?.overallProgress).toBe(25);
+    });
+
+    it('should update execution progress by specId', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1', specId: 'spec-001' })]
+      });
+
+      useTaskStore.getState().reconcileTaskState('spec-001', {
+        phase: 'planning',
+        phaseProgress: 75
+      });
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(task.executionProgress?.phaseProgress).toBe(75);
+    });
+
+    it('should update log activity when timestamp is provided as Date', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const timestamp = new Date();
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        message: 'Working on feature',
+        timestamp
+      });
+
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity).toBeDefined();
+      expect(activity?.lastLogTimestamp.getTime()).toBe(timestamp.getTime());
+      expect(activity?.lastActivityLog).toBe('Working on feature');
+    });
+
+    it('should update log activity when timestamp is provided as ISO string', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const timestamp = new Date();
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        currentSubtask: 'subtask-1',
+        timestamp: timestamp.toISOString()
+      });
+
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity).toBeDefined();
+      expect(activity?.lastLogTimestamp.getTime()).toBe(timestamp.getTime());
+      expect(activity?.lastActivityLog).toBe('subtask-1');
+    });
+
+    it('should not update log activity when timestamp is invalid', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        timestamp: 'invalid-date' as unknown as Date
+      });
+
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity).toBeUndefined();
+    });
+
+    it('should reject timestamps more than 5 minutes in the future (clock skew)', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const futureTimestamp = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes in future
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        timestamp: futureTimestamp
+      });
+
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity).toBeUndefined();
+    });
+
+    it('should accept timestamps within 5 minutes in the future', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const nearFutureTimestamp = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes in future
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        message: 'Future activity',
+        timestamp: nearFutureTimestamp
+      });
+
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity).toBeDefined();
+      expect(activity?.lastLogTimestamp.getTime()).toBe(nearFutureTimestamp.getTime());
+    });
+
+    it('should merge with existing execution progress', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          executionProgress: {
+            phase: 'planning',
+            phaseProgress: 100,
+            overallProgress: 20,
+            startedAt: new Date('2024-01-01')
+          }
+        })]
+      });
+
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        phaseProgress: 0
+      });
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.executionProgress?.phase).toBe('coding');
+      expect(task.executionProgress?.phaseProgress).toBe(0);
+      expect(task.executionProgress?.overallProgress).toBe(20); // Preserved
+      expect(task.executionProgress?.startedAt).toEqual(new Date('2024-01-01')); // Preserved
+    });
+
+    it('should not modify state for non-existent task', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const initialState = useTaskStore.getState();
+      useTaskStore.getState().reconcileTaskState('non-existent', {
+        phase: 'coding'
+      });
+
+      expect(useTaskStore.getState().tasks).toEqual(initialState.tasks);
+    });
+
+    it('should use phase name when no message or currentSubtask provided', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const timestamp = new Date();
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'qa_review',
+        timestamp
+      });
+
+      const activity = useTaskStore.getState().getLogActivity('task-1');
+      expect(activity?.lastActivityLog).toBe('Phase: qa_review');
+    });
+
+    it('should update task updatedAt timestamp', () => {
+      const oldDate = new Date('2024-01-01');
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1', updatedAt: oldDate })]
+      });
+
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding'
+      });
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.updatedAt.getTime()).toBeGreaterThan(oldDate.getTime());
+    });
+
+    it('should track activity as recent when timestamp is new', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        timestamp: new Date() // Now
+      });
+
+      expect(useTaskStore.getState().getIsTaskActivityRecent('task-1')).toBe(true);
+    });
+
+    it('should track activity as stale when timestamp is old', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      const oldTimestamp = new Date(Date.now() - 10 * 60 * 1000); // 10 minutes ago
+      useTaskStore.getState().reconcileTaskState('task-1', {
+        phase: 'coding',
+        timestamp: oldTimestamp
+      });
+
+      expect(useTaskStore.getState().getIsTaskActivityRecent('task-1')).toBe(false);
     });
   });
 });
