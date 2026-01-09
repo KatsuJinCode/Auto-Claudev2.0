@@ -11,6 +11,7 @@ export function useIpcListeners(): void {
   const updateTaskFromPlan = useTaskStore((state) => state.updateTaskFromPlan);
   const updateTaskStatus = useTaskStore((state) => state.updateTaskStatus);
   const updateExecutionProgress = useTaskStore((state) => state.updateExecutionProgress);
+  const updateLogActivity = useTaskStore((state) => state.updateLogActivity);
   const appendLog = useTaskStore((state) => state.appendLog);
   const setError = useTaskStore((state) => state.setError);
 
@@ -44,6 +45,21 @@ export function useIpcListeners(): void {
     const cleanupExecutionProgress = window.electronAPI.onTaskExecutionProgress(
       (taskId: string, progress: ExecutionProgress) => {
         updateExecutionProgress(taskId, progress);
+
+        // Update log activity with timestamp from execution progress
+        // The timestamp comes from actual log parsing and is the source of truth for timers
+        if (progress.timestamp) {
+          // Parse ISO string timestamp from IPC (serialized in agent-events-handlers.ts)
+          const timestamp = typeof progress.timestamp === 'string'
+            ? new Date(progress.timestamp)
+            : progress.timestamp;
+
+          // Only update if we got a valid timestamp
+          if (!isNaN(timestamp.getTime())) {
+            const logContent = progress.message || progress.currentSubtask || `Phase: ${progress.phase}`;
+            updateLogActivity(taskId, timestamp, logContent);
+          }
+        }
       }
     );
 
@@ -180,7 +196,7 @@ export function useIpcListeners(): void {
       cleanupRateLimit();
       cleanupSDKRateLimit();
     };
-  }, [updateTaskFromPlan, updateTaskStatus, updateExecutionProgress, appendLog, setError]);
+  }, [updateTaskFromPlan, updateTaskStatus, updateExecutionProgress, updateLogActivity, appendLog, setError]);
 }
 
 /**

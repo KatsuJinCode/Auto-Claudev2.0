@@ -28,6 +28,8 @@ export interface ExecutionProgress {
   currentSubtask?: string;  // Current subtask being processed
   message?: string;  // Current status message
   startedAt?: Date;
+  /** Timestamp from log entry (source of truth for activity timers). May be Date or ISO string from IPC. */
+  timestamp?: Date | string;
 }
 
 export interface Subtask {
