@@ -144,20 +144,22 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
     await archiveTasks(task.projectId, [task.id]);
   };
 
+  // Map status to badge variant that matches Kanban column border colors
+  // Column colors defined in globals.css: column-backlog, column-in-progress, etc.
   const getStatusBadgeVariant = (status: string) => {
     switch (status) {
       case 'in_progress':
-        return 'info';
+        return 'info'; // matches column-in-progress: var(--info)
       case 'blocked':
         return 'warning';
       case 'ai_review':
-        return 'warning';
+        return 'warning'; // matches column-ai-review: var(--warning)
       case 'human_review':
-        return 'purple';
+        return 'purple'; // matches column-human-review: #A855F7
       case 'done':
-        return 'success';
+        return 'success'; // matches column-done: var(--success)
       default:
-        return 'secondary';
+        return 'muted'; // matches column-backlog: var(--muted-foreground)
     }
   };
 
