@@ -952,6 +952,7 @@ export class AgentProcessManager {
     let phaseProgress = 0;
     let currentSubtask: string | undefined;
     let lastMessage: string | undefined;
+    let lastTimestamp: Date | undefined;
     // Collect all output for rate limit detection
     let allOutput = '';
 
@@ -979,6 +980,10 @@ export class AgentProcessManager {
         if (phaseUpdate.message) {
           lastMessage = phaseUpdate.message;
         }
+        // Capture timestamp from log for log-driven UI state sync
+        if (phaseUpdate.timestamp) {
+          lastTimestamp = phaseUpdate.timestamp;
+        }
 
         // Reset phase progress on phase change, otherwise increment
         if (phaseChanged) {
@@ -994,7 +999,8 @@ export class AgentProcessManager {
           phaseProgress,
           overallProgress,
           currentSubtask,
-          message: lastMessage
+          message: lastMessage,
+          timestamp: lastTimestamp
         });
       }
     };

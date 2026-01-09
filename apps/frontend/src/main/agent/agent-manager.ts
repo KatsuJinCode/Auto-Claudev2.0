@@ -730,9 +730,22 @@ export class AgentManager extends EventEmitter {
     let overallProgress = 50;
     let message = 'Reconnected to running agent';
     let currentSubtask: string | undefined;
+    let timestamp: Date | undefined;
 
     if (heartbeatResult.success && heartbeatResult.data) {
       const heartbeat = heartbeatResult.data;
+
+      // Extract timestamp from heartbeat for log-driven UI state sync
+      if (heartbeat.timestamp) {
+        try {
+          const heartbeatTimestamp = new Date(heartbeat.timestamp);
+          if (!isNaN(heartbeatTimestamp.getTime())) {
+            timestamp = heartbeatTimestamp;
+          }
+        } catch {
+          // Invalid timestamp, leave undefined
+        }
+      }
 
       // Try to detect phase from currentActivity string
       // The Python backend writes activity messages that include phase hints
@@ -785,7 +798,8 @@ export class AgentManager extends EventEmitter {
       phaseProgress,
       overallProgress,
       message,
-      currentSubtask
+      currentSubtask,
+      timestamp
     };
   }
 
@@ -1172,7 +1186,8 @@ export class AgentManager extends EventEmitter {
         phaseProgress: 50, // Unknown exact progress
         overallProgress: this.events.calculateOverallProgress(phaseUpdate.phase, 50),
         currentSubtask: phaseUpdate.currentSubtask,
-        message: phaseUpdate.message
+        message: phaseUpdate.message,
+        timestamp: phaseUpdate.timestamp
       });
     }
   }
