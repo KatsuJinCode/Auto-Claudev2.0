@@ -1617,6 +1617,73 @@ body {
 }
 
 /* ============================================
+   Task Activity Pulse Animation
+   ============================================ */
+
+/* Activity pulse animation for tasks with recent log activity */
+.task-activity-pulse {
+  position: relative;
+  animation: activity-pulse 2s ease-in-out infinite;
+}
+
+@keyframes activity-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(78, 190, 150, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(78, 190, 150, 0.15);
+  }
+}
+
+/* Dark mode activity pulse - uses success color for visibility */
+.dark .task-activity-pulse {
+  animation: activity-pulse-dark 2s ease-in-out infinite;
+}
+
+@keyframes activity-pulse-dark {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(78, 190, 150, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(78, 190, 150, 0.2);
+  }
+}
+
+/* Activity indicator dot - small pulsing dot for compact activity feedback */
+.activity-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background-color: var(--success);
+  animation: activity-dot-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes activity-dot-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.7;
+  }
+}
+
+/* Activity glow effect for border */
+.task-activity-glow {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.task-activity-glow.active {
+  border-color: var(--success);
+  box-shadow: 0 0 8px rgba(78, 190, 150, 0.3);
+}
+
+.dark .task-activity-glow.active {
+  box-shadow: 0 0 12px rgba(78, 190, 150, 0.25);
+}
+
+/* ============================================
    Full Screen Dialog Animations
    ============================================ */
 
