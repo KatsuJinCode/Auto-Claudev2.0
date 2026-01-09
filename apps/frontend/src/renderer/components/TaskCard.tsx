@@ -23,7 +23,7 @@ import {
   EXECUTION_PHASE_LABELS,
   EXECUTION_PHASE_BADGE_COLORS
 } from '../../shared/constants';
-import { startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks } from '../stores/task-store';
+import { useTaskStore, startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks } from '../stores/task-store';
 import type { Task, TaskCategory, ReviewReason } from '../../shared/types';
 
 // Category icon mapping
@@ -48,6 +48,9 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
   const [isStuck, setIsStuck] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
   const [, setTimeRefresh] = useState(0); // Forces re-render for relative time display
+
+  // Get log activity for this task to show log-based timer
+  const logActivity = useTaskStore((state) => state.logActivity.get(task.id));
 
   // Refresh relative time display every 30 seconds
   useEffect(() => {
@@ -381,7 +384,8 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Clock className="h-3 w-3" />
-            <span>{formatRelativeTime(task.updatedAt)}</span>
+            {/* Use lastLogTimestamp from log activity when available for accurate elapsed time */}
+            <span>{formatRelativeTime(logActivity?.lastLogTimestamp ?? task.updatedAt)}</span>
           </div>
 
           {/* Action buttons */}
