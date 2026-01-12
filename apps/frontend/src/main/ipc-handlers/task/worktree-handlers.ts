@@ -124,8 +124,7 @@ export function registerWorktreeHandlers(
             cwd: projectPath,
             encoding: 'utf-8'
           });
-          allBranches = branchOutput.split("
-").map(b => b.trim()).filter(Boolean);
+          allBranches = branchOutput.split("\n").map(b => b.trim()).filter(Boolean);
         } catch {
           // Ignore branch listing errors
         }
@@ -143,8 +142,7 @@ export function registerWorktreeHandlers(
             cwd: projectPath,
             encoding: 'utf-8'
           });
-          for (const line of wtOutput.split("
-")) {
+          for (const line of wtOutput.split("\n")) {
             if (line.startsWith('worktree ')) {
               const wtPath = line.substring(9);
               // Skip the main worktree
