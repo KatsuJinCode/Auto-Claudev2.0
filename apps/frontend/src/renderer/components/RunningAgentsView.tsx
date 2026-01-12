@@ -30,6 +30,13 @@ function getStatusIndicator(status: TaskStatus, isRecent: boolean) {
         animate: true,
         label: 'QA Review'
       };
+    case 'human_review':
+      return {
+        icon: CheckCircle2,
+        color: 'text-green-500',
+        animate: false,
+        label: 'Review'
+      };
     case 'done':
       return {
         icon: CheckCircle2,
@@ -37,12 +44,12 @@ function getStatusIndicator(status: TaskStatus, isRecent: boolean) {
         animate: false,
         label: 'Complete'
       };
-    case 'failed':
+    case 'blocked':
       return {
         icon: AlertTriangle,
         color: 'text-red-500',
         animate: false,
-        label: 'Failed'
+        label: 'Blocked'
       };
     default:
       return {
