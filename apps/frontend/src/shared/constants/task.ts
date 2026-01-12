@@ -211,3 +211,76 @@ export const ALLOWED_IMAGE_TYPES_DISPLAY = 'PNG, JPEG, GIF, WebP, SVG';
 
 // Attachments directory name within spec folder
 export const ATTACHMENTS_DIR = 'attachments';
+
+// ============================================
+// Kanban Board Columns (New 4-column layout)
+// ============================================
+
+// The visual Kanban columns (4 columns instead of 6)
+export type KanbanColumnId = 'queue' | 'in_progress' | 'review' | 'done';
+
+// Subsections within the Queue column
+export type QueueSubsection = 'unstarted' | 'blocked' | 'failed';
+
+// Column configuration
+export interface KanbanColumnConfig {
+  id: KanbanColumnId;
+  label: string;
+  borderClass: string;
+  emptyIcon: string;
+  emptyMessage: string;
+  emptySubtext: string;
+}
+
+// Subsection configuration for Queue column
+export interface QueueSubsectionConfig {
+  id: QueueSubsection;
+  label: string;
+  emptyMessage: string;
+}
+
+// Column order for display
+export const KANBAN_COLUMNS: KanbanColumnId[] = ['queue', 'in_progress', 'review', 'done'];
+
+// Column display configuration
+export const KANBAN_COLUMN_CONFIG: Record<KanbanColumnId, KanbanColumnConfig> = {
+  queue: {
+    id: 'queue',
+    label: 'Queue',
+    borderClass: 'column-backlog',
+    emptyIcon: 'Inbox',
+    emptyMessage: 'No tasks queued',
+    emptySubtext: 'Add a task to get started'
+  },
+  in_progress: {
+    id: 'in_progress',
+    label: 'In Progress',
+    borderClass: 'column-in-progress',
+    emptyIcon: 'Loader2',
+    emptyMessage: 'Nothing running',
+    emptySubtext: 'Start a task from Queue'
+  },
+  review: {
+    id: 'review',
+    label: 'Review',
+    borderClass: 'column-human-review',
+    emptyIcon: 'Eye',
+    emptyMessage: 'Nothing to review',
+    emptySubtext: 'Completed tasks appear here'
+  },
+  done: {
+    id: 'done',
+    label: 'Done',
+    borderClass: 'column-done',
+    emptyIcon: 'CheckCircle2',
+    emptyMessage: 'No completed tasks',
+    emptySubtext: 'Approved tasks appear here'
+  }
+};
+
+// Queue subsection configuration
+export const QUEUE_SUBSECTIONS: QueueSubsectionConfig[] = [
+  { id: 'unstarted', label: 'Unstarted', emptyMessage: 'No pending tasks' },
+  { id: 'blocked', label: 'Blocked', emptyMessage: 'No blocked tasks' },
+  { id: 'failed', label: 'Failed', emptyMessage: 'No failed tasks' }
+];
