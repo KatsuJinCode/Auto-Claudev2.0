@@ -120,6 +120,7 @@ async function executeCommand(cmd: Command): Promise<void> {
         writeResult({ id: cmd.id, success: true, data: 'Closing app' });
         await app.close();
         process.exit(0);
+        break; // Unreachable but satisfies linter
       }
 
       default:
