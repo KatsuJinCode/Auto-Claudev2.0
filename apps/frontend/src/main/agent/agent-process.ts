@@ -7,12 +7,9 @@ import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
-// ProcessType, ExecutionProgressData imported elsewhere if needed
 import { getAgentRegistry, AgentRegistryEntry } from './agent-registry';
-import { detectRateLimit, createSDKRateLimitInfo, getProfileEnv, detectAuthFailure } from '../rate-limit-detector';
 import { projectStore } from '../project-store';
-import { getClaudeProfileManager } from '../claude-profile-manager';
-import { findPythonCommand, parsePythonCommand } from '../python-detector';
+import { findPythonCommand } from '../python-detector';
 import { ensureDir } from '../fs-utils';
 
 /**
