@@ -199,6 +199,7 @@ def setup_workspace(
     mode: WorkspaceMode,
     source_spec_dir: Path | None = None,
     base_branch: str | None = None,
+    force_unsafe: bool = False,
 ) -> tuple[Path, WorktreeManager | None, Path | None]:
     """
     Set up the workspace based on user's choice.
