@@ -65,6 +65,28 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       tasks: state.tasks.map((t) => {
         if (t.id !== taskId && t.specId !== taskId) return t;
 
+        // CRITICAL: Once a task is marked 'done' by human review, NEVER auto-change status
+        // This prevents stale plan updates from moving tasks out of Done column
+        if (t.status === 'done') {
+          // Still update subtasks and title, but preserve 'done' status
+          const subtasks: Subtask[] = plan.phases.flatMap((phase) =>
+            phase.subtasks.map((subtask) => ({
+              id: subtask.id,
+              title: subtask.description,
+              description: subtask.description,
+              status: subtask.status,
+              files: [],
+              verification: subtask.verification as Subtask['verification']
+            }))
+          );
+          return {
+            ...t,
+            title: plan.feature || t.title,
+            subtasks,
+            updatedAt: new Date()
+          };
+        }
+
         // Extract subtasks from plan
         const subtasks: Subtask[] = plan.phases.flatMap((phase) =>
           phase.subtasks.map((subtask) => ({
