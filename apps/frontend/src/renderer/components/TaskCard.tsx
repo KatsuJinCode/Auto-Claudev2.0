@@ -1,10 +1,5 @@
-<<<<<<< HEAD
-import { useState, useEffect } from 'react';
-import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, ChevronDown, ChevronRight } from 'lucide-react';
-=======
 import { useState, useEffect, useMemo } from 'react';
-import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, Activity, Moon } from 'lucide-react';
->>>>>>> auto-claude/004-ui-state-reliability
+import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, ChevronDown, ChevronRight, Activity, Moon } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
