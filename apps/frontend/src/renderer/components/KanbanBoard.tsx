@@ -237,3 +237,127 @@ function DroppableColumn({ columnId, tasks, onTaskClick, isOver, onAddClick, onA
     </div>
   );
 }
+
+export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefreshClick }: KanbanBoardProps) {
+  const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [overColumnId, setOverColumnId] = useState<string | null>(null);
+  const [overSubsection, setOverSubsection] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [collapsedSubsections, setCollapsedSubsections] = useState<Record<QueueSubsection, boolean>>({
+    unstarted: false, blocked: false, failed: false
+  });
+
+  const archivedCount = useMemo(() => tasks.filter((t) => t.metadata?.archivedAt).length, [tasks]);
+  const filteredTasks = useMemo(() => showArchived ? tasks : tasks.filter((t) => !t.metadata?.archivedAt), [tasks, showArchived]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const tasksByColumn = useMemo(() => {
+    const grouped: Record<KanbanColumnId, Task[]> = { queue: [], in_progress: [], review: [], done: [] };
+    filteredTasks.forEach((task) => { grouped[getKanbanColumn(task)].push(task); });
+    return grouped;
+  }, [filteredTasks]);
+
+  const handleArchiveAll = async () => {
+    const projectId = tasks[0]?.projectId;
+    if (!projectId) return;
+    const doneTaskIds = tasksByColumn.done.map((t) => t.id);
+    if (doneTaskIds.length === 0) return;
+    await archiveTasks(projectId, doneTaskIds);
+  };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const task = tasks.find((t) => t.id === event.active.id);
+    if (task) setActiveTask(task);
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    const { over } = event;
+    if (!over) { setOverColumnId(null); setOverSubsection(null); return; }
+    const overId = over.id as string;
+    if (overId.startsWith('queue-')) { setOverColumnId('queue'); setOverSubsection(overId); return; }
+    if (KANBAN_COLUMNS.includes(overId as KanbanColumnId)) { setOverColumnId(overId); setOverSubsection(null); return; }
+    const overTask = tasks.find((t) => t.id === overId);
+    if (overTask) {
+      const column = getKanbanColumn(overTask);
+      setOverColumnId(column);
+      setOverSubsection(column === 'queue' ? `queue-${categorizeQueueTask(overTask)}` : null);
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveTask(null); setOverColumnId(null); setOverSubsection(null);
+    if (!over) return;
+    const activeTaskId = active.id as string;
+    const overId = over.id as string;
+    const task = tasks.find((t) => t.id === activeTaskId);
+    if (!task) return;
+    if (overId.startsWith('queue-')) {
+      const subsection = overId.replace('queue-', '') as QueueSubsection;
+      const newStatus = columnToStatus('queue', subsection);
+      if (task.status !== newStatus) persistTaskStatus(activeTaskId, newStatus);
+      return;
+    }
+    if (KANBAN_COLUMNS.includes(overId as KanbanColumnId)) {
+      const newStatus = columnToStatus(overId as KanbanColumnId);
+      if (task.status !== newStatus) persistTaskStatus(activeTaskId, newStatus);
+      return;
+    }
+    const overTask = tasks.find((t) => t.id === overId);
+    if (overTask) {
+      const overColumn = getKanbanColumn(overTask);
+      const newStatus = overColumn === 'queue' ? columnToStatus('queue', categorizeQueueTask(overTask)) : columnToStatus(overColumn);
+      if (task.status !== newStatus) persistTaskStatus(activeTaskId, newStatus);
+    }
+  };
+
+  const handleToggleSubsection = (subsection: QueueSubsection) => {
+    setCollapsedSubsections(prev => ({ ...prev, [subsection]: !prev[subsection] }));
+  };
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border/50">
+        {onRefreshClick && (
+          <Button variant="ghost" size="sm" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground" onClick={onRefreshClick}>
+            <RefreshCw className="h-4 w-4" />
+            Refresh Tasks
+          </Button>
+        )}
+        <div className="flex items-center gap-2">
+          <Checkbox id="showArchived" checked={showArchived} onCheckedChange={(checked) => setShowArchived(checked === true)} />
+          <Label htmlFor="showArchived" className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer">
+            <Archive className="h-3.5 w-3.5" />
+            Show archived
+            {archivedCount > 0 && <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-muted">{archivedCount}</span>}
+          </Label>
+        </div>
+      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+        <div className="flex flex-1 gap-4 overflow-x-auto p-6">
+          {KANBAN_COLUMNS.map((columnId) => (
+            <DroppableColumn
+              key={columnId}
+              columnId={columnId}
+              tasks={tasksByColumn[columnId]}
+              onTaskClick={onTaskClick}
+              isOver={overColumnId === columnId}
+              onAddClick={columnId === 'queue' ? onNewTaskClick : undefined}
+              onArchiveAll={columnId === 'done' ? handleArchiveAll : undefined}
+              collapsedSubsections={collapsedSubsections}
+              onToggleSubsection={handleToggleSubsection}
+              overSubsection={overSubsection}
+            />
+          ))}
+        </div>
+        <DragOverlay>
+          {activeTask ? <div className="drag-overlay-card"><TaskCard task={activeTask} onClick={() => {}} /></div> : null}
+        </DragOverlay>
+      </DndContext>
+    </div>
+  );
+}
