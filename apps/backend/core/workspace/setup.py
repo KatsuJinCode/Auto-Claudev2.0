@@ -237,7 +237,7 @@ def setup_workspace(
     manager.setup()
 
     # Get or create worktree for THIS SPECIFIC SPEC
-    worktree_info = manager.get_or_create_worktree(spec_name)
+    worktree_info = manager.get_or_create_worktree(spec_name, force_unsafe=force_unsafe)
 
     # Copy spec files to worktree if provided
     localized_spec_dir = None
