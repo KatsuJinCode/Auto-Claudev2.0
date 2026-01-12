@@ -135,3 +135,105 @@ function QueueSubsectionComponent({ subsection, tasks, onTaskClick, isOver, isCo
     </div>
   );
 }
+
+interface DroppableColumnProps {
+  columnId: KanbanColumnId;
+  tasks: Task[];
+  onTaskClick: (task: Task) => void;
+  isOver: boolean;
+  onAddClick?: () => void;
+  onArchiveAll?: () => void;
+  collapsedSubsections: Record<QueueSubsection, boolean>;
+  onToggleSubsection: (subsection: QueueSubsection) => void;
+  overSubsection?: string | null;
+}
+
+function DroppableColumn({ columnId, tasks, onTaskClick, isOver, onAddClick, onArchiveAll, collapsedSubsections, onToggleSubsection, overSubsection }: DroppableColumnProps) {
+  const { setNodeRef } = useDroppable({ id: columnId });
+  const config = KANBAN_COLUMN_CONFIG[columnId];
+  const taskIds = tasks.map((t) => t.id);
+
+  const queueSubsectionTasks = useMemo(() => {
+    if (columnId !== 'queue') return null;
+    return {
+      unstarted: tasks.filter(t => categorizeQueueTask(t) === 'unstarted'),
+      blocked: tasks.filter(t => categorizeQueueTask(t) === 'blocked'),
+      failed: tasks.filter(t => categorizeQueueTask(t) === 'failed')
+    };
+  }, [columnId, tasks]);
+
+  const getEmptyIcon = () => {
+    switch (config.emptyIcon) {
+      case 'Inbox': return <Inbox className="h-6 w-6 text-muted-foreground/50" />;
+      case 'Loader2': return <Loader2 className="h-6 w-6 text-muted-foreground/50" />;
+      case 'Eye': return <Eye className="h-6 w-6 text-muted-foreground/50" />;
+      case 'CheckCircle2': return <CheckCircle2 className="h-6 w-6 text-muted-foreground/50" />;
+      default: return <Inbox className="h-6 w-6 text-muted-foreground/50" />;
+    }
+  };
+
+  return (
+    <div ref={setNodeRef} className={cn('flex min-w-56 flex-1 flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent backdrop-blur-sm transition-all duration-200', config.borderClass, 'border-t-2', isOver && !overSubsection && 'drop-zone-highlight')}>
+      <div className="flex items-center justify-between p-4 border-b border-white/5">
+        <div className="flex items-center gap-2.5">
+          <h2 className="font-semibold text-sm text-foreground">{config.label}</h2>
+          <span className="column-count-badge">{tasks.length}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {columnId === 'queue' && onAddClick && (
+            <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-primary/10 hover:text-primary transition-colors" onClick={onAddClick}>
+              <Plus className="h-4 w-4" />
+            </Button>
+          )}
+          {columnId === 'done' && onArchiveAll && tasks.length > 0 && (
+            <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-muted-foreground/10 hover:text-muted-foreground transition-colors" onClick={onArchiveAll} title="Archive all done tasks">
+              <Archive className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="flex-1 min-h-0">
+        <ScrollArea className="h-full px-3 pb-3 pt-2">
+          {columnId === 'queue' && queueSubsectionTasks ? (
+            <div className="space-y-3 min-h-[120px]">
+              {QUEUE_SUBSECTIONS.map((subsectionConfig) => (
+                <QueueSubsectionComponent
+                  key={subsectionConfig.id}
+                  subsection={subsectionConfig.id}
+                  tasks={queueSubsectionTasks[subsectionConfig.id]}
+                  onTaskClick={onTaskClick}
+                  isOver={overSubsection === `queue-${subsectionConfig.id}`}
+                  isCollapsed={collapsedSubsections[subsectionConfig.id]}
+                  onToggle={() => onToggleSubsection(subsectionConfig.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+              <div className="space-y-3 min-h-[120px]">
+                {tasks.length === 0 ? (
+                  <div className={cn('empty-column-dropzone flex flex-col items-center justify-center py-6', isOver && 'active')}>
+                    {isOver ? (
+                      <>
+                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center mb-2">
+                          <Plus className="h-4 w-4 text-primary" />
+                        </div>
+                        <span className="text-sm font-medium text-primary">Drop here</span>
+                      </>
+                    ) : (
+                      <>
+                        {getEmptyIcon()}
+                        <span className="mt-2 text-sm font-medium text-muted-foreground/70">{config.emptyMessage}</span>
+                        <span className="mt-0.5 text-xs text-muted-foreground/50">{config.emptySubtext}</span>
+                      </>
+                    )}
+                  </div>
+                ) : tasks.map((task) => <SortableTaskCard key={task.id} task={task} onClick={() => onTaskClick(task)} />)}
+              </div>
+            </SortableContext>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
+  );
+}
