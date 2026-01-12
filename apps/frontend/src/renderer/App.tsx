@@ -653,6 +653,9 @@ export function App() {
                     isActive={activeView === 'terminals'}
                   />
                 </div>
+                {activeView === 'running-agents' && (
+                  <RunningAgentsView projectPath={selectedProject?.path} />
+                )}
                 {activeView === 'roadmap' && (activeProjectId || selectedProjectId) && (
                   <Roadmap projectId={activeProjectId || selectedProjectId!} onGoToTask={handleGoToTask} />
                 )}
