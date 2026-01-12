@@ -177,8 +177,7 @@ class WorktreeManager:
         project_dir_normalized = str(self.project_dir.resolve()).replace("\\", "/").rstrip("/")
 
         worktrees = []
-        for line in result.stdout.split("
-"):
+        for line in result.stdout.split("\n"):
             if line.startswith("worktree "):
                 path = line.split(" ", 1)[1].strip()
                 # Normalize path for comparison (handle Windows/Unix path differences)
