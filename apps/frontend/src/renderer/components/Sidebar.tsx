@@ -104,6 +104,9 @@ export function Sidebar({
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
+  // Get running agent count for badge
+  const runningAgentCount = useRunningAgentCount();
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
