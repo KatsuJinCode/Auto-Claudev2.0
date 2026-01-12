@@ -212,6 +212,7 @@ def setup_workspace(
         mode: The workspace mode to use
         source_spec_dir: Optional source spec directory to copy to worktree
         base_branch: Base branch for worktree creation (default: current branch)
+        force_unsafe: If True, bypass worktree safety checks (for testing only)
 
     Returns:
         Tuple of (working_directory, worktree_manager or None, localized_spec_dir or None)
