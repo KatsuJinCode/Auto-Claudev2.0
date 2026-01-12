@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS, AUTO_BUILD_PATHS } from '../../../shared/constants';
-import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem } from '../../../shared/types';
+import type { IPCResult, WorktreeStatus, WorktreeSafetyCheck, WorktreeDiff, WorktreeDiffFile, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem } from '../../../shared/types';
 import path from 'path';
 import { existsSync, readdirSync, statSync, readFileSync } from 'fs';
 import { execSync, spawn, spawnSync } from 'child_process';
@@ -67,6 +67,156 @@ export function registerWorktreeHandlers(
   pythonEnvManager: PythonEnvManager,
   getMainWindow: () => BrowserWindow | null
 ): void {
+
+  /**
+   * Check if it is safe to create a worktree for a project.
+   * 
+   * BLOCKS worktree creation if:
+   * - Any branch exists besides main/master (user might be working on it)
+   * - Any existing worktrees exist (could cause confusion)
+   * 
+   * This prevents catastrophic data loss when:
+   * 1. User is on branch 'feature-x'
+   * 2. Auto-Claude creates worktree from 'main' (not 'feature-x')
+   * 3. Merge back loses all 'feature-x' work!
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORKTREE_SAFETY_CHECK,
+    async (_, projectPath: string): Promise<IPCResult<WorktreeSafetyCheck>> => {
+      try {
+        // Get current branch
+        let currentBranch = 'main';
+        try {
+          currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+            cwd: projectPath,
+            encoding: 'utf-8'
+          }).trim();
+        } catch {
+          // Default to main if can't get current branch
+        }
+
+        // Detect base branch (main or master)
+        let baseBranch = 'main';
+        try {
+          execSync('git rev-parse --verify main', {
+            cwd: projectPath,
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe']
+          });
+          baseBranch = 'main';
+        } catch {
+          try {
+            execSync('git rev-parse --verify master', {
+              cwd: projectPath,
+              encoding: 'utf-8',
+              stdio: ['pipe', 'pipe', 'pipe']
+            });
+            baseBranch = 'master';
+          } catch {
+            baseBranch = currentBranch; // Fall back to current
+          }
+        }
+
+        // Get all branches
+        let allBranches: string[] = [];
+        try {
+          const branchOutput = execSync('git branch --format="%(refname:short)"', {
+            cwd: projectPath,
+            encoding: 'utf-8'
+          });
+          allBranches = branchOutput.split('
+').map(b => b.trim()).filter(Boolean);
+        } catch {
+          // Ignore branch listing errors
+        }
+
+        // Find branches that are NOT main/master and NOT auto-claude branches
+        const safeBases = new Set(['main', 'master']);
+        const otherBranches = allBranches.filter(
+          b => !safeBases.has(b) && !b.startsWith('auto-claude/')
+        );
+
+        // Get existing worktrees
+        let existingWorktrees: string[] = [];
+        try {
+          const wtOutput = execSync('git worktree list --porcelain', {
+            cwd: projectPath,
+            encoding: 'utf-8'
+          });
+          for (const line of wtOutput.split('
+')) {
+            if (line.startsWith('worktree ')) {
+              const wtPath = line.substring(9);
+              // Skip the main worktree
+              if (wtPath !== projectPath && !wtPath.endsWith(projectPath)) {
+                existingWorktrees.push(wtPath);
+              }
+            }
+          }
+        } catch {
+          // Ignore worktree listing errors
+        }
+
+        // Determine if safe
+        const isSafe = otherBranches.length === 0 && existingWorktrees.length === 0;
+
+        // Build warning message if unsafe
+        let warningMessage: string | undefined;
+        if (!isSafe) {
+          const warnings: string[] = [];
+
+          if (otherBranches.length > 0) {
+            const branchList = otherBranches.slice(0, 5).join(', ');
+            const more = otherBranches.length > 5 ? ` ... and ${otherBranches.length - 5} more` : '';
+            warnings.push(
+              `DANGER: ${otherBranches.length} branch(es) exist besides main/master:
+  ${branchList}${more}`
+            );
+            warnings.push(`
+You are currently on branch '${currentBranch}'.`);
+            
+            if (!safeBases.has(currentBranch)) {
+              warnings.push(
+                `
+WARNING: Creating a worktree from '${baseBranch}' will NOT include work from '${currentBranch}'!
+` +
+                `Any work done in the worktree and merged back will NOT contain your current branch's changes.`
+              );
+            }
+          }
+
+          if (existingWorktrees.length > 0) {
+            warnings.push(`
+Existing worktrees found:
+  ${existingWorktrees.join('
+  ')}`);
+          }
+
+          warningMessage = warnings.join('
+');
+        }
+
+        return {
+          success: true,
+          data: {
+            isSafe,
+            currentBranch,
+            baseBranch,
+            otherBranches,
+            existingWorktrees,
+            warningMessage
+          }
+        };
+      } catch (error) {
+        console.error('Failed to check worktree safety:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to check worktree safety'
+        };
+      }
+    }
+  );
+
   /**
    * Get the worktree status for a task
    * Per-spec architecture: Each spec has its own worktree at .worktrees/{spec-name}/
