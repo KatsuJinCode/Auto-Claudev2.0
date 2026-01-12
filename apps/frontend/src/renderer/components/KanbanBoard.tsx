@@ -92,7 +92,8 @@ interface QueueSubsectionProps {
 }
 
 function QueueSubsectionComponent({ subsection, tasks, onTaskClick, isOver, isCollapsed, onToggle }: QueueSubsectionProps) {
-  const { setNodeRef } = useDroppable({ id:  });
+  const droppableId = `queue-${subsection}`;
+  const { setNodeRef } = useDroppable({ id: droppableId });
   const taskIds = tasks.map((t) => t.id);
   const config = QUEUE_SUBSECTIONS.find(s => s.id === subsection);
 
