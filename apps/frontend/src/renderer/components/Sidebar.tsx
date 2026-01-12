@@ -262,6 +262,9 @@ export function Sidebar({
     const isActive = activeView === item.id;
     const Icon = item.icon;
 
+    // Show badge for running agents
+    const showBadge = item.id === 'running-agents' && runningAgentCount > 0;
+
     return (
       <button
         key={item.id}
@@ -274,9 +277,14 @@ export function Sidebar({
           isActive && 'bg-accent text-accent-foreground'
         )}
       >
-        <Icon className="h-4 w-4 shrink-0" />
+        <Icon className={cn('h-4 w-4 shrink-0', showBadge && 'text-blue-500')} />
         <span className="flex-1 text-left">{item.label}</span>
-        {item.shortcut && (
+        {showBadge && (
+          <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-medium text-white">
+            {runningAgentCount}
+          </span>
+        )}
+        {!showBadge && item.shortcut && (
           <kbd className="pointer-events-none hidden h-5 select-none items-center gap-1 rounded-md border border-border bg-secondary px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:flex">
             {item.shortcut}
           </kbd>
