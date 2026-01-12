@@ -353,16 +353,20 @@ class TestPerSpecWorktreeName:
 
     def test_different_specs_get_different_worktrees(self, temp_git_repo: Path):
         """Different specs create separate worktrees."""
+        # Use force_unsafe=True to bypass worktree safety check in tests
+        # (normally the safety check blocks creating a second worktree)
         working_dir1, _, _ = setup_workspace(
             temp_git_repo,
             "spec-1",
             WorkspaceMode.ISOLATED,
+            force_unsafe=True,
         )
 
         working_dir2, _, _ = setup_workspace(
             temp_git_repo,
             "spec-2",
             WorkspaceMode.ISOLATED,
+            force_unsafe=True,
         )
 
         # Each spec has its own worktree
