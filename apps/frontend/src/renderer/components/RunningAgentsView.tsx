@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, X, ChevronDown, Play, Square, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Search, X, ChevronDown, Play, Square, AlertTriangle, CheckCircle2, Loader2, Copy, Trash2, Check } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { cn } from '../lib/utils';
 import { useTaskStore, isActivityRecent } from '../stores/task-store';
-import type { Task, TaskStatus } from '../../shared/types';
+import type { TaskStatus } from '../../shared/types';
+
+/** Maximum lines to display in memory to prevent performance issues */
+const MAX_DISPLAY_LINES = 5000;
 
 interface RunningAgentsViewProps {
   projectPath?: string;
@@ -63,13 +66,14 @@ function getStatusIndicator(status: TaskStatus, isRecent: boolean) {
 export function RunningAgentsView({ projectPath }: RunningAgentsViewProps) {
   const tasks = useTaskStore((state) => state.tasks);
   const logActivity = useTaskStore((state) => state.logActivity);
+  const clearTaskLogs = useTaskStore((state) => state.clearTaskLogs);
 
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   const outputRef = useRef<HTMLDivElement>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   // Filter to running/active agents (in_progress or ai_review)
   const runningAgents = useMemo(() => {
@@ -104,16 +108,31 @@ export function RunningAgentsView({ projectPath }: RunningAgentsViewProps) {
     return allAgents.find((t) => t.id === activeAgentId);
   }, [allAgents, activeAgentId]);
 
+  // Get logs with buffer limit applied
+  const bufferedLogs = useMemo(() => {
+    if (!activeAgent?.logs) return [];
+    const logs = activeAgent.logs;
+    // Only show last MAX_DISPLAY_LINES to prevent memory issues
+    if (logs.length > MAX_DISPLAY_LINES) {
+      return logs.slice(-MAX_DISPLAY_LINES);
+    }
+    return logs;
+  }, [activeAgent?.logs]);
+
+  // Track if logs were truncated
+  const logsTruncated = useMemo(() => {
+    return (activeAgent?.logs?.length || 0) > MAX_DISPLAY_LINES;
+  }, [activeAgent?.logs?.length]);
+
   // Filter logs based on search query
   const filteredLogs = useMemo(() => {
-    if (!activeAgent?.logs) return [];
-    if (!searchQuery) return activeAgent.logs;
+    if (!searchQuery) return bufferedLogs;
 
     const query = searchQuery.toLowerCase();
-    return activeAgent.logs.filter((log) =>
+    return bufferedLogs.filter((log) =>
       log.toLowerCase().includes(query)
     );
-  }, [activeAgent?.logs, searchQuery]);
+  }, [bufferedLogs, searchQuery]);
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
@@ -134,10 +153,22 @@ export function RunningAgentsView({ projectPath }: RunningAgentsViewProps) {
     }
   };
 
-  const handleClearLogs = () => {
-    // Could add a clearLogs action to task store if needed
-    // For now, just visual feedback
-  };
+  const handleClearLogs = useCallback(() => {
+    if (activeAgentId && clearTaskLogs) {
+      clearTaskLogs(activeAgentId);
+    }
+  }, [activeAgentId, clearTaskLogs]);
+
+  const handleCopyOutput = useCallback(async () => {
+    const textToCopy = filteredLogs.join('\n');
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [filteredLogs]);
 
   const handleScrollToBottom = () => {
     setAutoScroll(true);
@@ -226,19 +257,51 @@ export function RunningAgentsView({ projectPath }: RunningAgentsViewProps) {
         <Button
           variant="ghost"
           size="sm"
+          onClick={handleCopyOutput}
+          disabled={filteredLogs.length === 0}
+          title="Copy output to clipboard"
+        >
+          {copied ? (
+            <Check className="h-4 w-4 text-green-500" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleClearLogs}
+          disabled={!activeAgent?.logs?.length}
+          title="Clear output display"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={handleScrollToBottom}
           className={cn(!autoScroll && 'text-blue-500')}
+          title={autoScroll ? 'Auto-scroll enabled' : 'Click to enable auto-scroll'}
         >
           <ChevronDown className="h-4 w-4" />
           {!autoScroll && <span className="ml-1">Auto-scroll</span>}
         </Button>
       </div>
 
+      {/* Truncation warning */}
+      {logsTruncated && (
+        <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-3 py-1 text-xs text-yellow-600 dark:text-yellow-400">
+          Showing last {MAX_DISPLAY_LINES.toLocaleString()} lines. Full log available in file.
+        </div>
+      )}
+
       {/* Output display */}
       <div
         ref={outputRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-auto bg-zinc-950 p-3 font-mono text-xs"
+        className="flex-1 overflow-auto bg-zinc-950 p-3 font-mono text-xs select-text"
       >
         {filteredLogs.length === 0 ? (
           <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -269,14 +332,34 @@ export function RunningAgentsView({ projectPath }: RunningAgentsViewProps) {
               );
             })()}
           </div>
-          <div>
-            {activeAgent.logs?.length || 0} lines
-            {searchQuery && ` (${filteredLogs.length} matching)`}
+          <div className="flex items-center gap-3">
+            {logsTruncated && (
+              <span className="text-yellow-600 dark:text-yellow-400">
+                {(activeAgent.logs?.length || 0).toLocaleString()} total
+              </span>
+            )}
+            <span>
+              {filteredLogs.length.toLocaleString()} lines
+              {searchQuery && ` (filtered)`}
+            </span>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Export hook to get running agent count for badges
+ */
+export function useRunningAgentCount(): number {
+  const tasks = useTaskStore((state) => state.tasks);
+  return useMemo(() => {
+    return tasks.filter((task) =>
+      task.status === 'in_progress' ||
+      task.status === 'ai_review'
+    ).length;
+  }, [tasks]);
 }
 
 /**
