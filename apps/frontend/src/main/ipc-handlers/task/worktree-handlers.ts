@@ -186,12 +186,10 @@ WARNING: Creating a worktree from '${baseBranch}' will NOT include work from '${
           if (existingWorktrees.length > 0) {
             warnings.push(`
 Existing worktrees found:
-  ${existingWorktrees.join('
-  ')}`);
+  ${existingWorktrees.join('\n  ')}`);
           }
 
-          warningMessage = warnings.join('
-');
+          warningMessage = warnings.join('\n');
         }
 
         return {
