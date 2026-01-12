@@ -98,6 +98,9 @@ function QueueSubsectionComponent({ subsection, tasks, onTaskClick, isOver, isCo
   const taskIds = tasks.map((t) => t.id);
   const config = QUEUE_SUBSECTIONS.find(s => s.id === subsection);
 
+  // Default to collapsed for blocked/failed when empty
+  const effectiveCollapsed = isCollapsed || (tasks.length === 0 && (subsection === 'blocked' || subsection === 'failed'));
+
   const getSubsectionIcon = () => {
     switch (subsection) {
       case 'blocked': return <Ban className="h-3.5 w-3.5 text-orange-400" />;
