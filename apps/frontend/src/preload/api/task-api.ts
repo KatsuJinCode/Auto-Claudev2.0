@@ -44,6 +44,7 @@ export interface TaskAPI {
   checkTaskRunning: (taskId: string) => Promise<IPCResult<boolean>>;
 
   // Workspace Management (for human review)
+  checkWorktreeSafety: (projectPath: string) => Promise<IPCResult<import('../../shared/types').WorktreeSafetyCheck>>;
   getWorktreeStatus: (taskId: string) => Promise<IPCResult<import('../../shared/types').WorktreeStatus>>;
   getWorktreeDiff: (taskId: string) => Promise<IPCResult<import('../../shared/types').WorktreeDiff>>;
   mergeWorktree: (taskId: string, options?: { noCommit?: boolean }) => Promise<IPCResult<import('../../shared/types').WorktreeMergeResult>>;
@@ -121,6 +122,9 @@ export const createTaskAPI = (): TaskAPI => ({
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CHECK_RUNNING, taskId),
 
   // Workspace Management
+  checkWorktreeSafety: (projectPath: string): Promise<IPCResult<import('../../shared/types').WorktreeSafetyCheck>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_SAFETY_CHECK, projectPath),
+
   getWorktreeStatus: (taskId: string): Promise<IPCResult<import('../../shared/types').WorktreeStatus>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_STATUS, taskId),
 
