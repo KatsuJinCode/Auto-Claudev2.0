@@ -439,3 +439,185 @@ class TestWorktreeUtilities:
         commands = manager.get_test_commands("test-spec")
 
         assert any("npm" in cmd for cmd in commands)
+
+
+class TestWorktreeSafetyCheck:
+    """Tests for worktree safety check functionality.
+    
+    ✓ DETERMINATE: All tests exit when assertion completes or fails.
+    
+    The safety check prevents catastrophic data loss by blocking
+    worktree creation when:
+    - Non-main/master branches exist (user might be working on them)
+    - Existing worktrees exist (could cause confusion)
+    """
+
+    def test_safety_check_safe_when_only_main(self, temp_git_repo: Path):
+        """Safety check passes when only main branch exists.
+        
+        ✓ DETERMINATE: test_safety_check_safe_when_only_main exits when assertions complete.
+        """
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        safety = manager.check_worktree_safety()
+        
+        assert safety.is_safe is True
+        assert safety.current_branch == "main"
+        assert len(safety.other_branches) == 0
+        assert len(safety.existing_worktrees) == 0
+        assert safety.warning_message is None
+
+    def test_safety_check_unsafe_with_other_branch(self, temp_git_repo: Path):
+        """Safety check fails when non-main branches exist.
+        
+        ✓ DETERMINATE: test_safety_check_unsafe_with_other_branch exits when assertions complete.
+        """
+        # Create another branch
+        subprocess.run(
+            ["git", "checkout", "-b", "feature-branch"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        safety = manager.check_worktree_safety()
+        
+        assert safety.is_safe is False
+        assert "feature-branch" in safety.other_branches
+        assert safety.warning_message is not None
+        assert "DANGER" in safety.warning_message
+
+    def test_safety_check_unsafe_with_existing_worktree(self, temp_git_repo: Path):
+        """Safety check fails when worktrees already exist.
+        
+        ✓ DETERMINATE: test_safety_check_unsafe_with_existing_worktree exits when assertions complete.
+        """
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        # Create a worktree first (with force to bypass safety for setup)
+        manager.create_worktree("existing-spec", force_unsafe=True)
+        
+        # Now check safety for creating another
+        safety = manager.check_worktree_safety()
+        
+        assert safety.is_safe is False
+        assert len(safety.existing_worktrees) > 0
+        assert safety.warning_message is not None
+
+    def test_safety_check_ignores_auto_claude_branches(self, temp_git_repo: Path):
+        """Safety check ignores auto-claude/* branches (they're ours).
+        
+        ✓ DETERMINATE: test_safety_check_ignores_auto_claude_branches exits when assertions complete.
+        """
+        # Create an auto-claude branch
+        subprocess.run(
+            ["git", "checkout", "-b", "auto-claude/test-spec"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        safety = manager.check_worktree_safety()
+        
+        # auto-claude branches should not trigger unsafe
+        assert "auto-claude/test-spec" not in safety.other_branches
+        assert safety.is_safe is True
+
+    def test_create_worktree_blocked_when_unsafe(self, temp_git_repo: Path):
+        """create_worktree raises error when safety check fails.
+        
+        ✓ DETERMINATE: test_create_worktree_blocked_when_unsafe exits when exception caught or assertion fails.
+        """
+        # Create another branch to make it unsafe
+        subprocess.run(
+            ["git", "checkout", "-b", "feature-branch"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        with pytest.raises(WorktreeError) as exc_info:
+            manager.create_worktree("new-spec")
+        
+        assert "BLOCKED" in str(exc_info.value)
+        assert "unsafe" in str(exc_info.value).lower()
+
+    def test_create_worktree_force_unsafe_bypasses_check(self, temp_git_repo: Path):
+        """create_worktree with force_unsafe=True bypasses safety check.
+        
+        ✓ DETERMINATE: test_create_worktree_force_unsafe_bypasses_check exits when assertions complete.
+        """
+        # Create another branch to make it unsafe
+        subprocess.run(
+            ["git", "checkout", "-b", "feature-branch"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        # Should succeed with force_unsafe=True
+        info = manager.create_worktree("new-spec", force_unsafe=True)
+        
+        assert info.path.exists()
+        assert info.branch == "auto-claude/new-spec"
+
+    def test_safety_check_warning_mentions_current_branch(self, temp_git_repo: Path):
+        """Warning message mentions current branch when not on main.
+        
+        ✓ DETERMINATE: test_safety_check_warning_mentions_current_branch exits when assertions complete.
+        """
+        # Create and stay on feature branch
+        subprocess.run(
+            ["git", "checkout", "-b", "my-feature"],
+            cwd=temp_git_repo, capture_output=True
+        )
+        
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        safety = manager.check_worktree_safety()
+        
+        assert safety.current_branch == "my-feature"
+        assert safety.is_safe is False
+        assert "my-feature" in safety.warning_message
+        assert "WARNING" in safety.warning_message
+
+    def test_safety_check_dataclass_to_dict(self, temp_git_repo: Path):
+        """WorktreeSafetyCheck.to_dict() returns correct dictionary.
+        
+        ✓ DETERMINATE: test_safety_check_dataclass_to_dict exits when assertions complete.
+        """
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        
+        safety = manager.check_worktree_safety()
+        d = safety.to_dict()
+        
+        assert "is_safe" in d
+        assert "current_branch" in d
+        assert "base_branch" in d
+        assert "other_branches" in d
+        assert "existing_worktrees" in d
+        assert d["is_safe"] == safety.is_safe
