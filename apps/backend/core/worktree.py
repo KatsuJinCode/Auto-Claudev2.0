@@ -487,7 +487,7 @@ class WorktreeManager:
 
     def get_or_create_worktree(
         self, spec_name: str, force_unsafe: bool = False
-    ) -> WorktreeSafetyCheck | WorktreeInfo:
+    ) -> WorktreeInfo:
         """
         Get existing worktree or create a new one for a spec.
 
@@ -496,19 +496,17 @@ class WorktreeManager:
             force_unsafe: If True, bypass safety checks when creating (DANGEROUS)
 
         Returns:
-            WorktreeInfo for the worktree, or WorktreeSafetyCheck if blocked
+            WorktreeInfo for the worktree
+            
+        Raises:
+            WorktreeError: If safety check fails and force_unsafe is False
         """
         existing = self.get_worktree_info(spec_name)
         if existing:
             print(f"Using existing worktree: {existing.path}")
             return existing
 
-        # Check safety before creating
-        if not force_unsafe:
-            safety = self.check_worktree_safety()
-            if not safety.is_safe:
-                return safety  # Return safety check so caller can show UI
-
+        # create_worktree handles the safety check internally
         return self.create_worktree(spec_name, force_unsafe=force_unsafe)
 
     def remove_worktree(self, spec_name: str, delete_branch: bool = False) -> None:
