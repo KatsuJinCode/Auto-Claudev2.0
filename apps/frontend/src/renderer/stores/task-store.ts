@@ -326,6 +326,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       };
     }),
 
+  clearTaskLogs: (taskId) =>
+    set((state) => ({
+      tasks: state.tasks.map((t) =>
+        t.id === taskId || t.specId === taskId
+          ? { ...t, logs: [] }
+          : t
+      )
+    })),
+
   selectTask: (taskId) => set({ selectedTaskId: taskId }),
 
   setLoading: (isLoading) => set({ isLoading }),
