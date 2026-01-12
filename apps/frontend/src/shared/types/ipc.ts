@@ -28,7 +28,6 @@ import type {
   ImplementationPlan,
   ExecutionProgress,
   WorktreeStatus,
-  WorktreeSafetyCheck,
   WorktreeDiff,
   WorktreeMergeResult,
   WorktreeDiscardResult,
