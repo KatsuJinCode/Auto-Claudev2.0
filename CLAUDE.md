@@ -30,20 +30,37 @@ claude setup-token
 # Add to apps/backend/.env: CLAUDE_CODE_OAUTH_TOKEN=your-token
 ```
 
-### Creating and Running Specs
+### Creating Tasks (CRITICAL - Read This First)
+
+**⚠️ THERE ARE TWO DIFFERENT TOOLS. USING THE WRONG ONE IS A SERIOUS MISTAKE.**
+
+| Tool | What It Does | When to Use |
+|------|--------------|-------------|
+| `create_task.py` | Creates task FILES only. NO agents run. User reviews in GUI, then clicks Start. | **DEFAULT. Use this unless user explicitly asks for autonomous execution.** |
+| `spec_runner.py` | Runs FULL AI pipeline automatically. Multiple agents execute immediately. | Only when user explicitly requests autonomous/automatic spec creation. |
+
+**When user says "create a task" or "make a spec" → USE `create_task.py`**
+
 ```bash
 cd apps/backend
 
-# Create a spec interactively
+# CREATE TASK FOR USER REVIEW (default - no agents run)
+python create_task.py --project-dir /path/to/project --description "What to build"
+python create_task.py --project-dir /path/to/project --description "Fix the login bug" --category bug_fix
+
+# The task appears in the GUI. User reviews and clicks Start to run the pipeline.
+```
+
+### Running Specs Autonomously (Only When Explicitly Requested)
+```bash
+cd apps/backend
+
+# AUTONOMOUS EXECUTION - runs AI agents immediately (use only when explicitly requested)
 python spec_runner.py --interactive
-
-# Create spec from task description
 python spec_runner.py --task "Add user authentication"
-
-# Force complexity level (simple/standard/complex)
 python spec_runner.py --task "Fix button" --complexity simple
 
-# Run autonomous build
+# Run implementation after spec exists
 python run.py --spec 001
 
 # List all specs
