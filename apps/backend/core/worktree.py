@@ -173,12 +173,18 @@ class WorktreeManager:
         if result.returncode != 0:
             return []
 
+        # Normalize project_dir for comparison (resolve to absolute, normalize separators)
+        project_dir_normalized = str(self.project_dir.resolve()).replace("\\", "/").rstrip("/")
+
         worktrees = []
-        for line in result.stdout.split("\n"):
+        for line in result.stdout.split("
+"):
             if line.startswith("worktree "):
-                path = line.split(" ", 1)[1]
+                path = line.split(" ", 1)[1].strip()
+                # Normalize path for comparison (handle Windows/Unix path differences)
+                path_normalized = path.replace("\\", "/").rstrip("/")
                 # Skip the main worktree (project dir)
-                if path != str(self.project_dir):
+                if path_normalized != project_dir_normalized:
                     worktrees.append(path)
         return worktrees
 
