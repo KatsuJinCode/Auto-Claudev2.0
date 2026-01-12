@@ -22,6 +22,8 @@ export interface ExecutionProgressData {
   overallProgress: number;
   currentSubtask?: string;
   message?: string;
+  /** Timestamp extracted from log entry (source of truth for timers) */
+  timestamp?: Date;
 }
 
 export type ProcessType = 'spec-creation' | 'task-execution' | 'qa-process';

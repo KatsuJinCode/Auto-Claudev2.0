@@ -1,53 +1,97 @@
 import { ExecutionProgressData } from './types';
 
 /**
+ * Regular expression to extract ISO timestamp from log lines.
+ * Matches format: [2024-01-09T12:34:56.789Z] or [2024-01-09T12:34:56.789+00:00]
+ * The timestamp is captured in group 1.
+ */
+const LOG_TIMESTAMP_REGEX = /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))\]/;
+
+/**
  * Event handling and progress parsing logic
  */
 export class AgentEvents {
   /**
-   * Parse log output to detect execution phase transitions
+   * Extract timestamp from a log line if present.
+   * Log lines are formatted as: [ISO_TIMESTAMP] content
+   *
+   * @param log - The log line to parse
+   * @returns Date object if timestamp found and valid, null otherwise
+   */
+  extractLogTimestamp(log: string): Date | null {
+    const match = log.match(LOG_TIMESTAMP_REGEX);
+    if (!match) {
+      return null;
+    }
+
+    try {
+      const timestamp = new Date(match[1]);
+      // Validate the timestamp is reasonable (not NaN and not too far in past/future)
+      if (isNaN(timestamp.getTime())) {
+        return null;
+      }
+
+      // Reject timestamps more than 24 hours in the future (clock skew protection)
+      const now = Date.now();
+      const timestampMs = timestamp.getTime();
+      if (timestampMs > now + (24 * 60 * 60 * 1000)) {
+        return null;
+      }
+
+      return timestamp;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Parse log output to detect execution phase transitions.
+   * Also extracts timestamp from log line for log-driven timer sync.
    */
   parseExecutionPhase(
     log: string,
     currentPhase: ExecutionProgressData['phase'],
     isSpecRunner: boolean
-  ): { phase: ExecutionProgressData['phase']; message?: string; currentSubtask?: string } | null {
+  ): { phase: ExecutionProgressData['phase']; message?: string; currentSubtask?: string; timestamp?: Date } | null {
     const lowerLog = log.toLowerCase();
+
+    // Extract timestamp from log line (source of truth for timers)
+    const timestamp = this.extractLogTimestamp(log) ?? undefined;
 
     // Spec runner phase detection (all part of "planning")
     if (isSpecRunner) {
       if (lowerLog.includes('discovering') || lowerLog.includes('discovery')) {
-        return { phase: 'planning', message: 'Discovering project context...' };
+        return { phase: 'planning', message: 'Discovering project context...', timestamp };
       }
       if (lowerLog.includes('requirements') || lowerLog.includes('gathering')) {
-        return { phase: 'planning', message: 'Gathering requirements...' };
+        return { phase: 'planning', message: 'Gathering requirements...', timestamp };
       }
       if (lowerLog.includes('writing spec') || lowerLog.includes('spec writer')) {
-        return { phase: 'planning', message: 'Writing specification...' };
+        return { phase: 'planning', message: 'Writing specification...', timestamp };
       }
       if (lowerLog.includes('validating') || lowerLog.includes('validation')) {
-        return { phase: 'planning', message: 'Validating specification...' };
+        return { phase: 'planning', message: 'Validating specification...', timestamp };
       }
       if (lowerLog.includes('spec complete') || lowerLog.includes('specification complete')) {
-        return { phase: 'planning', message: 'Specification complete' };
+        return { phase: 'planning', message: 'Specification complete', timestamp };
       }
     }
 
     // Run.py phase detection
     // Planner agent running
     if (lowerLog.includes('planner agent') || lowerLog.includes('creating implementation plan')) {
-      return { phase: 'planning', message: 'Creating implementation plan...' };
+      return { phase: 'planning', message: 'Creating implementation plan...', timestamp };
     }
 
     // Coder agent running
     if (lowerLog.includes('coder agent') || lowerLog.includes('starting coder')) {
-      return { phase: 'coding', message: 'Implementing code changes...' };
+      return { phase: 'coding', message: 'Implementing code changes...', timestamp };
     }
 
     // Subtask progress detection
     const subtaskMatch = log.match(/subtask[:\s]+(\d+(?:\/\d+)?|\w+[-_]\w+)/i);
     if (subtaskMatch && currentPhase === 'coding') {
-      return { phase: 'coding', currentSubtask: subtaskMatch[1], message: `Working on subtask ${subtaskMatch[1]}...` };
+      return { phase: 'coding', currentSubtask: subtaskMatch[1], message: `Working on subtask ${subtaskMatch[1]}...`, timestamp };
     }
 
     // Subtask completion detection
@@ -56,42 +100,43 @@ export class AgentEvents {
       return {
         phase: 'coding',
         currentSubtask: completedSubtask?.[1],
-        message: `Subtask ${completedSubtask?.[1] || ''} completed`
+        message: `Subtask ${completedSubtask?.[1] || ''} completed`,
+        timestamp
       };
     }
 
     // QA Review phase
     if (lowerLog.includes('qa reviewer') || lowerLog.includes('qa_reviewer') || lowerLog.includes('starting qa')) {
-      return { phase: 'qa_review', message: 'Running QA review...' };
+      return { phase: 'qa_review', message: 'Running QA review...', timestamp };
     }
 
     // QA Fixer phase
     if (lowerLog.includes('qa fixer') || lowerLog.includes('qa_fixer') || lowerLog.includes('fixing issues')) {
-      return { phase: 'qa_fixing', message: 'Fixing QA issues...' };
+      return { phase: 'qa_fixing', message: 'Fixing QA issues...', timestamp };
     }
 
     // Completion detection - be conservative, require explicit success markers
     // The AI agent prints "=== BUILD COMPLETE ===" when truly done (from coder.md)
     // Only trust this pattern, not generic "all subtasks completed" which could be false positive
     if (lowerLog.includes('=== build complete ===') || lowerLog.includes('qa passed')) {
-      return { phase: 'complete', message: 'Build completed successfully' };
+      return { phase: 'complete', message: 'Build completed successfully', timestamp };
     }
 
     // "All subtasks completed" is informational - don't change phase based on this alone
     // The coordinator may print this even when subtasks are blocked, so we stay in coding phase
     // and let the actual implementation_plan.json status drive the UI
     if (lowerLog.includes('all subtasks completed')) {
-      return { phase: 'coding', message: 'Subtasks marked complete' };
+      return { phase: 'coding', message: 'Subtasks marked complete', timestamp };
     }
 
     // Incomplete build detection - when coordinator exits with pending subtasks
     if (lowerLog.includes('build incomplete') || lowerLog.includes('subtasks still pending')) {
-      return { phase: 'coding', message: 'Build paused - subtasks still pending' };
+      return { phase: 'coding', message: 'Build paused - subtasks still pending', timestamp };
     }
 
     // Error/failure detection
     if (lowerLog.includes('build failed') || lowerLog.includes('error:') || lowerLog.includes('fatal')) {
-      return { phase: 'failed', message: log.trim().substring(0, 200) };
+      return { phase: 'failed', message: log.trim().substring(0, 200), timestamp };
     }
 
     return null;

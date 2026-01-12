@@ -245,7 +245,19 @@ export function registerAgenteventsHandlers(
   agentManager.on('execution-progress', (taskId: string, progress: ExecutionProgressData) => {
     const mainWindow = getMainWindow();
     if (mainWindow) {
-      mainWindow.webContents.send(IPC_CHANNELS.TASK_EXECUTION_PROGRESS, taskId, progress);
+      // Serialize timestamp as ISO string for consistent IPC handling
+      // This ensures the renderer receives a parseable string rather than relying on
+      // Electron's structured clone algorithm for Date objects
+      const progressWithSerializedTimestamp = {
+        ...progress,
+        timestamp: progress.timestamp ? progress.timestamp.toISOString() : undefined
+      };
+
+      mainWindow.webContents.send(
+        IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
+        taskId,
+        progressWithSerializedTimestamp
+      );
 
       // Auto-move task to AI Review when entering qa_review phase
       if (progress.phase === 'qa_review') {

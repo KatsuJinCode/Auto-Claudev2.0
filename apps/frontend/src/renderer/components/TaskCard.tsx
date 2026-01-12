@@ -1,5 +1,10 @@
+<<<<<<< HEAD
 import { useState, useEffect } from 'react';
 import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, ChevronDown, ChevronRight } from 'lucide-react';
+=======
+import { useState, useEffect, useMemo } from 'react';
+import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, Ban, Activity, Moon } from 'lucide-react';
+>>>>>>> auto-claude/004-ui-state-reliability
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -23,7 +28,7 @@ import {
   EXECUTION_PHASE_LABELS,
   EXECUTION_PHASE_BADGE_COLORS
 } from '../../shared/constants';
-import { startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks } from '../stores/task-store';
+import { useTaskStore, startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks, isActivityRecent } from '../stores/task-store';
 import type { Task, TaskCategory, ReviewReason } from '../../shared/types';
 
 // Category icon mapping
@@ -50,6 +55,9 @@ export function TaskCard({ task, onClick, compact = false }: TaskCardProps) {
   const [isRecovering, setIsRecovering] = useState(false);
   const [, setTimeRefresh] = useState(0); // Forces re-render for relative time display
 
+  // Get log activity for this task to show log-based timer
+  const logActivity = useTaskStore((state) => state.logActivity.get(task.id));
+
   // Refresh relative time display every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
@@ -69,6 +77,18 @@ export function TaskCard({ task, onClick, compact = false }: TaskCardProps) {
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);
+
+  // Check if task has recent log activity (for Active badge)
+  const isActive = isRunning && !isStuck && isActivityRecent(logActivity?.lastLogTimestamp);
+
+  // Check if task is running but has no recent activity (for Inactive badge)
+  // This indicates the agent may be stalled or waiting - shows after threshold passes
+  const isInactive = useMemo(() => {
+    if (!isRunning || isStuck) return false;
+    // Only show inactive if we have some log activity history but it's stale
+    if (!logActivity?.lastLogTimestamp) return false;
+    return !isActivityRecent(logActivity.lastLogTimestamp);
+  }, [isRunning, isStuck, logActivity?.lastLogTimestamp]);
 
   // Check if task is stuck (status says in_progress but no actual process)
   // Add a grace period to avoid false positives during process spawn
@@ -139,20 +159,22 @@ export function TaskCard({ task, onClick, compact = false }: TaskCardProps) {
     await archiveTasks(task.projectId, [task.id]);
   };
 
+  // Map status to badge variant that matches Kanban column border colors
+  // Column colors defined in globals.css: column-backlog, column-in-progress, etc.
   const getStatusBadgeVariant = (status: string) => {
     switch (status) {
       case 'in_progress':
-        return 'info';
+        return 'info'; // matches column-in-progress: var(--info)
       case 'blocked':
         return 'warning';
       case 'ai_review':
-        return 'warning';
+        return 'warning'; // matches column-ai-review: var(--warning)
       case 'human_review':
-        return 'purple';
+        return 'purple'; // matches column-human-review: #A855F7
       case 'done':
-        return 'success';
+        return 'success'; // matches column-done: var(--success)
       default:
-        return 'secondary';
+        return 'muted'; // matches column-backlog: var(--muted-foreground)
     }
   };
 
@@ -339,6 +361,27 @@ export function TaskCard({ task, onClick, compact = false }: TaskCardProps) {
                 Archived
               </Badge>
             )}
+            {/* Activity indicator - shows when agent is actively processing (recent log activity) */}
+            {isActive && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-success/10 text-success border-success/30 activity-indicator-dot"
+              >
+                <Activity className="h-2.5 w-2.5" />
+                Active
+              </Badge>
+            )}
+            {/* Inactive indicator - shows when task is running but no recent log activity (stale) */}
+            {isInactive && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-muted text-muted-foreground border-border"
+                title="No recent activity detected - agent may be waiting or stalled"
+              >
+                <Moon className="h-2.5 w-2.5" />
+                Inactive
+              </Badge>
+            )}
             {/* Execution phase badge - shown when actively running */}
             {hasActiveExecution && executionPhase && !isStuck && !isIncomplete && (
               <Badge
@@ -466,7 +509,8 @@ export function TaskCard({ task, onClick, compact = false }: TaskCardProps) {
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Clock className="h-3 w-3" />
-            <span>{formatRelativeTime(task.updatedAt)}</span>
+            {/* Use lastLogTimestamp from log activity when available for accurate elapsed time */}
+            <span>{formatRelativeTime(logActivity?.lastLogTimestamp ?? task.updatedAt)}</span>
           </div>
 
           {/* Action buttons */}

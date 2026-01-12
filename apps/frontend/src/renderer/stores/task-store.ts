@@ -1,11 +1,116 @@
 import { create } from 'zustand';
 import type { Task, TaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft } from '../../shared/types';
 
+/**
+ * Log activity state for tracking recent log timestamps per task.
+ * Used to derive timer values and activity indicators from actual log data
+ * rather than arbitrary counters.
+ */
+export interface LogActivityState {
+  /** Timestamp of the most recent log entry */
+  lastLogTimestamp: Date;
+  /** Content/message of the most recent log entry */
+  lastActivityLog: string;
+  /** When the activity tracking was last updated locally */
+  localUpdatedAt: Date;
+}
+
+/**
+ * Threshold in milliseconds to consider activity as "recent".
+ * Activity older than this will show as inactive.
+ * 5 minutes = 300000ms
+ */
+export const ACTIVITY_STALE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/**
+ * Minimum interval between log activity updates to prevent UI flicker.
+ * Rapid updates within this window will be ignored.
+ * 500ms = 0.5 seconds
+ */
+export const LOG_ACTIVITY_DEBOUNCE_MS = 500;
+
+/**
+ * Maximum allowed clock skew tolerance for timestamps.
+ * Timestamps beyond this in the future will be rejected.
+ * 5 minutes = 300000ms
+ */
+export const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * Check if a log timestamp is considered recent (within threshold).
+ * @param timestamp - The log timestamp to check
+ * @param thresholdMs - Optional custom threshold (defaults to ACTIVITY_STALE_THRESHOLD_MS)
+ * @returns true if activity is recent, false if stale
+ */
+export function isActivityRecent(timestamp: Date | undefined, thresholdMs = ACTIVITY_STALE_THRESHOLD_MS): boolean {
+  if (!timestamp) return false;
+  const now = Date.now();
+  const elapsed = now - timestamp.getTime();
+  return elapsed < thresholdMs;
+}
+
+/**
+ * Safely parse a timestamp from various input formats.
+ * Returns undefined if parsing fails, allowing caller to fallback.
+ * @param input - Date object, ISO string, number (epoch ms), or undefined
+ * @returns Parsed Date or undefined if invalid
+ */
+export function parseTimestamp(input: Date | string | number | undefined | null): Date | undefined {
+  if (!input) return undefined;
+
+  try {
+    if (input instanceof Date) {
+      // Validate Date object
+      return isNaN(input.getTime()) ? undefined : input;
+    }
+
+    if (typeof input === 'number') {
+      // Epoch milliseconds
+      const date = new Date(input);
+      return isNaN(date.getTime()) ? undefined : date;
+    }
+
+    if (typeof input === 'string') {
+      // Try ISO string or other date formats
+      const date = new Date(input);
+      return isNaN(date.getTime()) ? undefined : date;
+    }
+  } catch {
+    // Swallow parsing errors
+  }
+
+  return undefined;
+}
+
+/**
+ * Validate a timestamp for use in log activity tracking.
+ * Rejects invalid dates and timestamps too far in the future.
+ * @param timestamp - The timestamp to validate
+ * @param toleranceMs - Max allowed future time (default: CLOCK_SKEW_TOLERANCE_MS)
+ * @returns The timestamp if valid, undefined otherwise
+ */
+export function validateTimestamp(timestamp: Date | undefined, toleranceMs = CLOCK_SKEW_TOLERANCE_MS): Date | undefined {
+  if (!timestamp) return undefined;
+  if (isNaN(timestamp.getTime())) return undefined;
+
+  const now = Date.now();
+  const maxAllowed = now + toleranceMs;
+
+  // Reject timestamps more than tolerance in the future
+  if (timestamp.getTime() > maxAllowed) {
+    return undefined;
+  }
+
+  return timestamp;
+}
+
 interface TaskState {
   tasks: Task[];
   selectedTaskId: string | null;
   isLoading: boolean;
   error: string | null;
+  /** Per-task log activity tracking for log-driven timers and activity indicators */
+  logActivity: Map<string, LogActivityState>;
 
   // Actions
   setTasks: (tasks: Task[]) => void;
@@ -19,10 +124,28 @@ interface TaskState {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearTasks: () => void;
+  /** Update log activity state for a task (timestamp from actual log entry) */
+  updateLogActivity: (taskId: string, timestamp: Date, logContent: string) => void;
+  /** Clear log activity for a task (e.g., when task completes or is reset) */
+  clearLogActivity: (taskId: string) => void;
 
   // Selectors
   getSelectedTask: () => Task | undefined;
   getTasksByStatus: (status: TaskStatus) => Task[];
+  /** Get log activity state for a task */
+  getLogActivity: (taskId: string) => LogActivityState | undefined;
+  /** Check if a task has recent activity (within threshold) */
+  getIsTaskActivityRecent: (taskId: string) => boolean;
+
+  // Reconciliation
+  /**
+   * Reconcile task state from execution progress data.
+   * This is the primary method for updating task state from IPC events,
+   * atomically updating both executionProgress and logActivity.
+   * @param taskId - The task ID to update
+   * @param progress - Execution progress data including optional timestamp
+   */
+  reconcileTaskState: (taskId: string, progress: Partial<ExecutionProgress>) => void;
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
@@ -30,6 +153,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   selectedTaskId: null,
   isLoading: false,
   error: null,
+  logActivity: new Map(),
 
   setTasks: (tasks) => set({ tasks }),
 
@@ -46,19 +170,33 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     })),
 
   updateTaskStatus: (taskId, status) =>
-    set((state) => ({
-      tasks: state.tasks.map((t) => {
-        if (t.id !== taskId && t.specId !== taskId) return t;
+    set((state) => {
+      // Find the task to get canonical ID
+      const task = state.tasks.find((t) => t.id === taskId || t.specId === taskId);
+      const canonicalId = task?.id || taskId;
 
-        // When status goes to backlog, reset execution progress to idle
-        // This ensures the planning/coding animation stops when task is stopped
-        const executionProgress = status === 'backlog'
-          ? { phase: 'idle' as ExecutionPhase, phaseProgress: 0, overallProgress: 0 }
-          : t.executionProgress;
+      // When status goes to backlog, also clear log activity
+      let newLogActivity = state.logActivity;
+      if (status === 'backlog') {
+        newLogActivity = new Map(state.logActivity);
+        newLogActivity.delete(canonicalId);
+      }
 
-        return { ...t, status, executionProgress, updatedAt: new Date() };
-      })
-    })),
+      return {
+        tasks: state.tasks.map((t) => {
+          if (t.id !== taskId && t.specId !== taskId) return t;
+
+          // When status goes to backlog, reset execution progress to idle
+          // This ensures the planning/coding animation stops when task is stopped
+          const executionProgress = status === 'backlog'
+            ? { phase: 'idle' as ExecutionPhase, phaseProgress: 0, overallProgress: 0 }
+            : t.executionProgress;
+
+          return { ...t, status, executionProgress, updatedAt: new Date() };
+        }),
+        logActivity: newLogActivity
+      };
+    }),
 
   updateTaskFromPlan: (taskId, plan) =>
     set((state) => ({
@@ -162,13 +300,29 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     })),
 
   appendLog: (taskId, log) =>
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === taskId || t.specId === taskId
-          ? { ...t, logs: [...(t.logs || []), log] }
-          : t
-      )
-    })),
+    set((state) => {
+      // Find the task to get canonical ID
+      const task = state.tasks.find((t) => t.id === taskId || t.specId === taskId);
+      const canonicalId = task?.id || taskId;
+      const now = new Date();
+
+      // Update log activity tracking with current timestamp
+      const newLogActivity = new Map(state.logActivity);
+      newLogActivity.set(canonicalId, {
+        lastLogTimestamp: now,
+        lastActivityLog: log,
+        localUpdatedAt: now
+      });
+
+      return {
+        tasks: state.tasks.map((t) =>
+          t.id === taskId || t.specId === taskId
+            ? { ...t, logs: [...(t.logs || []), log] }
+            : t
+        ),
+        logActivity: newLogActivity
+      };
+    }),
 
   selectTask: (taskId) => set({ selectedTaskId: taskId }),
 
@@ -176,7 +330,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   setError: (error) => set({ error }),
 
-  clearTasks: () => set({ tasks: [], selectedTaskId: null }),
+  clearTasks: () => set({ tasks: [], selectedTaskId: null, logActivity: new Map() }),
 
   getSelectedTask: () => {
     const state = get();
@@ -186,7 +340,117 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   getTasksByStatus: (status) => {
     const state = get();
     return state.tasks.filter((t) => t.status === status);
-  }
+  },
+
+  updateLogActivity: (taskId, timestamp, logContent) =>
+    set((state) => {
+      const newLogActivity = new Map(state.logActivity);
+      // Find the actual task to get the canonical ID
+      const task = state.tasks.find((t) => t.id === taskId || t.specId === taskId);
+      const canonicalId = task?.id || taskId;
+
+      newLogActivity.set(canonicalId, {
+        lastLogTimestamp: timestamp,
+        lastActivityLog: logContent,
+        localUpdatedAt: new Date()
+      });
+      return { logActivity: newLogActivity };
+    }),
+
+  clearLogActivity: (taskId) =>
+    set((state) => {
+      const newLogActivity = new Map(state.logActivity);
+      // Find the actual task to get the canonical ID
+      const task = state.tasks.find((t) => t.id === taskId || t.specId === taskId);
+      const canonicalId = task?.id || taskId;
+
+      newLogActivity.delete(canonicalId);
+      return { logActivity: newLogActivity };
+    }),
+
+  getLogActivity: (taskId) => {
+    const state = get();
+    // Check by both id and specId
+    const task = state.tasks.find((t) => t.id === taskId || t.specId === taskId);
+    const canonicalId = task?.id || taskId;
+    return state.logActivity.get(canonicalId);
+  },
+
+  getIsTaskActivityRecent: (taskId) => {
+    const state = get();
+    const activity = state.getLogActivity(taskId);
+    if (!activity) return false;
+    return isActivityRecent(activity.lastLogTimestamp);
+  },
+
+  reconcileTaskState: (taskId, progress) =>
+    set((state) => {
+      // Find the task to get canonical ID
+      const task = state.tasks.find((t) => t.id === taskId || t.specId === taskId);
+      if (!task) return state;
+
+      const canonicalId = task.id;
+
+      // Get existing activity for fallback and debouncing
+      const existingActivity = state.logActivity.get(canonicalId);
+
+      // Parse and validate timestamp using helpers
+      const parsedTimestamp = parseTimestamp(progress.timestamp);
+      const validatedTimestamp = validateTimestamp(parsedTimestamp);
+
+      // Determine final timestamp: use validated if available, fallback to existing
+      let timestamp: Date | undefined = validatedTimestamp;
+      if (!timestamp && existingActivity) {
+        // Parsing failed - keep previous good timestamp (edge case: parsing errors)
+        timestamp = existingActivity.lastLogTimestamp;
+      }
+
+      // Update log activity if we have a valid timestamp
+      let newLogActivity = state.logActivity;
+      if (timestamp) {
+        const now = Date.now();
+        const logContent = progress.message || progress.currentSubtask || `Phase: ${progress.phase}`;
+
+        // Debounce check: only update if sufficient time has passed since last update
+        // This prevents UI flicker from rapid log updates (edge case: rapid updates)
+        const shouldUpdate = !existingActivity ||
+          (now - existingActivity.localUpdatedAt.getTime()) >= LOG_ACTIVITY_DEBOUNCE_MS ||
+          // Always update if the log content changed meaningfully
+          existingActivity.lastActivityLog !== logContent;
+
+        if (shouldUpdate) {
+          newLogActivity = new Map(state.logActivity);
+          newLogActivity.set(canonicalId, {
+            lastLogTimestamp: timestamp,
+            lastActivityLog: logContent,
+            localUpdatedAt: new Date()
+          });
+        }
+      }
+
+      // Update execution progress on the task
+      const existingProgress = task.executionProgress || {
+        phase: 'idle' as ExecutionPhase,
+        phaseProgress: 0,
+        overallProgress: 0
+      };
+
+      return {
+        tasks: state.tasks.map((t) => {
+          if (t.id !== canonicalId) return t;
+
+          return {
+            ...t,
+            executionProgress: {
+              ...existingProgress,
+              ...progress
+            },
+            updatedAt: new Date()
+          };
+        }),
+        logActivity: newLogActivity
+      };
+    })
 }));
 
 /**
