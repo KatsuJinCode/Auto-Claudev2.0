@@ -304,6 +304,25 @@ export interface WorktreeStatus {
   deletions?: number;
 }
 
+/**
+ * Result of worktree safety check.
+ * BLOCKS worktree creation if unsafe conditions exist.
+ */
+export interface WorktreeSafetyCheck {
+  /** Whether it is safe to create a worktree */
+  isSafe: boolean;
+  /** Current branch in the project */
+  currentBranch: string;
+  /** Base branch that would be used for worktree (main/master) */
+  baseBranch: string;
+  /** Branches that exist besides main/master (potential data loss risk) */
+  otherBranches: string[];
+  /** Existing worktrees that could cause confusion */
+  existingWorktrees: string[];
+  /** Human-readable warning message explaining the risk */
+  warningMessage?: string;
+}
+
 export interface WorktreeDiff {
   files: WorktreeDiffFile[];
   summary: string;
