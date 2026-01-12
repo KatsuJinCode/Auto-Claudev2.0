@@ -80,12 +80,12 @@ export function RunningAgentsView({ projectPath }: RunningAgentsViewProps) {
     );
   }, [tasks]);
 
-  // Also show recently completed/failed for context
+  // Also show recently completed/blocked for context
   const recentAgents = useMemo(() => {
     return tasks.filter((task) =>
-      (task.status === 'done' || task.status === 'failed') &&
+      (task.status === 'done' || task.status === 'human_review' || task.status === 'blocked') &&
       task.logs && task.logs.length > 0
-    ).slice(0, 5); // Last 5 completed
+    ).slice(0, 5); // Last 5 completed/finished
   }, [tasks]);
 
   // Combine running and recent
