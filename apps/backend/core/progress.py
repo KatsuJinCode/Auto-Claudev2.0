@@ -421,13 +421,19 @@ def get_next_subtask(spec_dir: Path) -> dict | None:
         phases = plan.get("phases", [])
 
         # Build a map of phase completion
+        # Store under BOTH the string id ("phase-1") AND integer phase number (1)
+        # because depends_on may use either format
         phase_complete = {}
         for phase in phases:
-            phase_id = phase.get("id") or phase.get("phase")
             subtasks = phase.get("subtasks", [])
-            phase_complete[phase_id] = all(
-                s.get("status") == "completed" for s in subtasks
-            )
+            is_complete = all(s.get("status") == "completed" for s in subtasks)
+
+            # Store under string id if present (e.g., "phase-1")
+            if phase.get("id"):
+                phase_complete[phase.get("id")] = is_complete
+            # Also store under integer phase number (e.g., 1)
+            if phase.get("phase") is not None:
+                phase_complete[phase.get("phase")] = is_complete
 
         # Find next available subtask
         for phase in phases:
