@@ -17,7 +17,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
-import { Plus, Inbox, Loader2, Eye, CheckCircle2, Archive, RefreshCw, ChevronDown, ChevronRight, Ban, AlertTriangle } from 'lucide-react';
+import { Plus, Inbox, Loader2, Eye, CheckCircle2, Archive, RefreshCw, ChevronDown, ChevronRight, Ban, AlertTriangle, LayoutGrid, LayoutList } from 'lucide-react';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
@@ -89,9 +89,10 @@ interface QueueSubsectionProps {
   isOver: boolean;
   isCollapsed: boolean;
   onToggle: () => void;
+  compactCards?: boolean;
 }
 
-function QueueSubsectionComponent({ subsection, tasks, onTaskClick, isOver, isCollapsed, onToggle }: QueueSubsectionProps) {
+function QueueSubsectionComponent({ subsection, tasks, onTaskClick, isOver, isCollapsed, onToggle, compactCards }: QueueSubsectionProps) {
   const droppableId = `queue-${subsection}`;
   const { setNodeRef } = useDroppable({ id: droppableId });
   const taskIds = tasks.map((t) => t.id);
@@ -128,7 +129,7 @@ function QueueSubsectionComponent({ subsection, tasks, onTaskClick, isOver, isCo
           <div className="p-2 pt-0 space-y-2">
             {tasks.length === 0 ? (
               <div className="py-3 text-center text-xs text-muted-foreground/60">{config?.emptyMessage || 'No tasks'}</div>
-            ) : tasks.map((task) => <SortableTaskCard key={task.id} task={task} onClick={() => onTaskClick(task)} />)}
+            ) : tasks.map((task) => <SortableTaskCard key={task.id} task={task} onClick={() => onTaskClick(task)} compact={compactCards} />)}
           </div>
         </SortableContext>
       )}
@@ -146,9 +147,10 @@ interface DroppableColumnProps {
   collapsedSubsections: Record<QueueSubsection, boolean>;
   onToggleSubsection: (subsection: QueueSubsection) => void;
   overSubsection?: string | null;
+  compactCards?: boolean;
 }
 
-function DroppableColumn({ columnId, tasks, onTaskClick, isOver, onAddClick, onArchiveAll, collapsedSubsections, onToggleSubsection, overSubsection }: DroppableColumnProps) {
+function DroppableColumn({ columnId, tasks, onTaskClick, isOver, onAddClick, onArchiveAll, collapsedSubsections, onToggleSubsection, overSubsection, compactCards }: DroppableColumnProps) {
   const { setNodeRef } = useDroppable({ id: columnId });
   const config = KANBAN_COLUMN_CONFIG[columnId];
   const taskIds = tasks.map((t) => t.id);
@@ -205,6 +207,7 @@ function DroppableColumn({ columnId, tasks, onTaskClick, isOver, onAddClick, onA
                   isOver={overSubsection === `queue-${subsectionConfig.id}`}
                   isCollapsed={collapsedSubsections[subsectionConfig.id]}
                   onToggle={() => onToggleSubsection(subsectionConfig.id)}
+                  compactCards={compactCards}
                 />
               ))}
             </div>
@@ -228,7 +231,7 @@ function DroppableColumn({ columnId, tasks, onTaskClick, isOver, onAddClick, onA
                       </>
                     )}
                   </div>
-                ) : tasks.map((task) => <SortableTaskCard key={task.id} task={task} onClick={() => onTaskClick(task)} />)}
+                ) : tasks.map((task) => <SortableTaskCard key={task.id} task={task} onClick={() => onTaskClick(task)} compact={compactCards} />)}
               </div>
             </SortableContext>
           )}
@@ -243,6 +246,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefreshClick
   const [overColumnId, setOverColumnId] = useState<string | null>(null);
   const [overSubsection, setOverSubsection] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [compactCards, setCompactCards] = useState(false);
   const [collapsedSubsections, setCollapsedSubsections] = useState<Record<QueueSubsection, boolean>>({
     unstarted: false, blocked: false, failed: false
   });
@@ -328,13 +332,26 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefreshClick
             Refresh Tasks
           </Button>
         )}
-        <div className="flex items-center gap-2">
-          <Checkbox id="showArchived" checked={showArchived} onCheckedChange={(checked) => setShowArchived(checked === true)} />
-          <Label htmlFor="showArchived" className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer">
-            <Archive className="h-3.5 w-3.5" />
-            Show archived
-            {archivedCount > 0 && <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-muted">{archivedCount}</span>}
-          </Label>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Button
+              variant={compactCards ? 'secondary' : 'ghost'}
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setCompactCards(!compactCards)}
+              title={compactCards ? 'Switch to expanded view' : 'Switch to compact view'}
+            >
+              {compactCards ? <LayoutGrid className="h-4 w-4" /> : <LayoutList className="h-4 w-4" />}
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox id="showArchived" checked={showArchived} onCheckedChange={(checked) => setShowArchived(checked === true)} />
+            <Label htmlFor="showArchived" className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer">
+              <Archive className="h-3.5 w-3.5" />
+              Show archived
+              {archivedCount > 0 && <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-muted">{archivedCount}</span>}
+            </Label>
+          </div>
         </div>
       </div>
       <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
@@ -347,6 +364,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefreshClick
               onTaskClick={onTaskClick}
               isOver={overColumnId === columnId}
               onAddClick={columnId === 'queue' ? onNewTaskClick : undefined}
+              compactCards={compactCards}
               onArchiveAll={columnId === 'done' ? handleArchiveAll : undefined}
               collapsedSubsections={collapsedSubsections}
               onToggleSubsection={handleToggleSubsection}
