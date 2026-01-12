@@ -121,13 +121,13 @@ function QueueSubsectionComponent({ subsection, tasks, onTaskClick, isOver, isCo
     <div ref={setNodeRef} className={cn('rounded-lg border transition-all duration-200', getSubsectionStyles(), isOver && 'ring-2 ring-primary/50 bg-primary/5')}>
       <button className="w-full flex items-center justify-between p-2 hover:bg-white/5 rounded-t-lg transition-colors" onClick={onToggle}>
         <div className="flex items-center gap-2">
-          {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+          {effectiveCollapsed ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
           {getSubsectionIcon()}
           <span className="text-xs font-medium text-foreground">{config?.label || subsection}</span>
           <span className="text-xs text-muted-foreground px-1.5 py-0.5 rounded-full bg-muted/50">{tasks.length}</span>
         </div>
       </button>
-      {!isCollapsed && (
+      {!effectiveCollapsed && (
         <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
           <div className="p-2 pt-0 space-y-2">
             {tasks.length === 0 ? (
