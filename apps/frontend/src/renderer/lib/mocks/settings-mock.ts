@@ -15,6 +15,7 @@ export const settingsMock = {
 
   // App Info
   getAppVersion: async () => '0.1.0-browser',
+  restartApp: async () => { console.warn('[browser-mock] restartApp called - would restart app in Electron'); },
 
   // App Update Operations (mock - no updates in browser mode)
   checkAppUpdate: async () => ({ success: true, data: null }),
@@ -24,5 +25,8 @@ export const settingsMock = {
   // App Update Event Listeners (no-op in browser mode)
   onAppUpdateAvailable: () => () => {},
   onAppUpdateDownloaded: () => () => {},
-  onAppUpdateProgress: () => () => {}
+  onAppUpdateProgress: () => () => {},
+
+  // Dev mode notifications (no-op in browser mode)
+  onDevBackendChanged: () => () => {}
 };

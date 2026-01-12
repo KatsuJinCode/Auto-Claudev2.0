@@ -9,6 +9,7 @@ import { pythonEnvManager } from './python-env-manager';
 import { getUsageMonitor } from './claude-profile/usage-monitor';
 import { initializeUsageMonitorForwarding } from './ipc-handlers/terminal-handlers';
 import { initializeAppUpdater } from './app-updater';
+import { startDevWatcher } from './dev-watcher';
 import { DEFAULT_APP_SETTINGS } from '../shared/constants';
 import { readSettingsFile } from './settings-utils';
 import type { AppSettings } from '../shared/types';
@@ -196,6 +197,10 @@ app.whenReady().then(() => {
       console.warn('[main] App auto-updater DISABLED (development mode)');
       console.warn('[main] To test updater logging, set DEBUG_UPDATER=true');
       console.warn('[main] Note: Actual updates only work in packaged builds');
+
+      // Start dev watcher to detect backend code changes
+      startDevWatcher(mainWindow);
+      console.warn('[main] Dev watcher started - watching for backend code changes');
       console.warn('[main] ========================================');
     }
   }

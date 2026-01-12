@@ -7,6 +7,12 @@ import type {
   SourceEnvCheckResult
 } from '../../shared/types';
 
+// Dev mode event listener type
+export interface DevBackendChangedInfo {
+  file: string;
+  timestamp: number;
+}
+
 export interface SettingsAPI {
   // App Settings
   getSettings: () => Promise<IPCResult<AppSettings>>;
@@ -14,11 +20,15 @@ export interface SettingsAPI {
 
   // App Info
   getAppVersion: () => Promise<string>;
+  restartApp: () => Promise<void>;
 
   // Auto-Build Source Environment
   getSourceEnv: () => Promise<IPCResult<SourceEnvConfig>>;
   updateSourceEnv: (config: { claudeOAuthToken?: string }) => Promise<IPCResult>;
   checkSourceToken: () => Promise<IPCResult<SourceEnvCheckResult>>;
+
+  // Dev mode notifications
+  onDevBackendChanged: (callback: (info: DevBackendChangedInfo) => void) => () => void;
 }
 
 export const createSettingsAPI = (): SettingsAPI => ({
@@ -33,6 +43,9 @@ export const createSettingsAPI = (): SettingsAPI => ({
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_VERSION),
 
+  restartApp: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
+
   // Auto-Build Source Environment
   getSourceEnv: (): Promise<IPCResult<SourceEnvConfig>> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUTOBUILD_SOURCE_ENV_GET),
@@ -41,5 +54,19 @@ export const createSettingsAPI = (): SettingsAPI => ({
     ipcRenderer.invoke(IPC_CHANNELS.AUTOBUILD_SOURCE_ENV_UPDATE, config),
 
   checkSourceToken: (): Promise<IPCResult<SourceEnvCheckResult>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.AUTOBUILD_SOURCE_ENV_CHECK_TOKEN)
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOBUILD_SOURCE_ENV_CHECK_TOKEN),
+
+  // Dev mode notifications
+  onDevBackendChanged: (callback: (info: DevBackendChangedInfo) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      info: DevBackendChangedInfo
+    ): void => {
+      callback(info);
+    };
+    ipcRenderer.on(IPC_CHANNELS.DEV_BACKEND_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.DEV_BACKEND_CHANGED, handler);
+    };
+  }
 });

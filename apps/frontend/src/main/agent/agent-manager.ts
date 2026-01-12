@@ -3,11 +3,13 @@ import path from 'path';
 import { existsSync, statSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
-import { AgentProcessManager, killAgentProcess, forceKillAgentProcess, getAgentOutputDir } from './agent-process';
+import { AgentProcessManager, killAgentProcess, forceKillAgentProcess, getAgentOutputDir, spawnAgentProcess, getAgentOutputFilePath } from './agent-process';
 import { AgentQueueManager } from './agent-queue';
 import { getAgentRegistry, AgentRegistryEntry, readHeartbeat } from './agent-registry';
 import { FileOutputStreamer, createFileOutputStreamer } from './file-output-streamer';
 import { getClaudeProfileManager } from '../claude-profile-manager';
+import { getProfileEnv } from '../rate-limit-detector';
+import { parsePythonCommand } from '../python-detector';
 import type { ExecutionProgressData } from './types';
 import {
   SpecCreationMetadata,
@@ -304,44 +306,44 @@ export class AgentManager extends EventEmitter {
     // Get combined environment variables
     const combinedEnv = this.processManager.getCombinedEnv(projectPath);
 
-    // spec_runner.py will auto-start run.py after spec creation completes
-    const args = [specRunnerPath, '--task', taskDescription, '--project-dir', projectPath];
+    // Build script arguments (without script path - that's passed separately)
+    const scriptArgs = ['--task', taskDescription, '--project-dir', projectPath];
 
     // Pass spec directory if provided (for UI-created tasks that already have a directory)
     if (specDir) {
-      args.push('--spec-dir', specDir);
+      scriptArgs.push('--spec-dir', specDir);
     }
 
     // Check if user requires review before coding
     if (!metadata?.requireReviewBeforeCoding) {
       // Auto-approve: When user starts a task from the UI without requiring review
-      args.push('--auto-approve');
+      scriptArgs.push('--auto-approve');
     }
 
     // Pass model and thinking level configuration
     // For auto profile, use phase-specific config; otherwise use single model/thinking
     if (metadata?.isAutoProfile && metadata.phaseModels && metadata.phaseThinking) {
       // Pass the spec phase model and thinking level to spec_runner
-      args.push('--model', metadata.phaseModels.spec);
-      args.push('--thinking-level', metadata.phaseThinking.spec);
+      scriptArgs.push('--model', metadata.phaseModels.spec);
+      scriptArgs.push('--thinking-level', metadata.phaseThinking.spec);
     } else if (metadata?.model) {
       // Non-auto profile: use single model and thinking level
-      args.push('--model', metadata.model);
+      scriptArgs.push('--model', metadata.model);
       if (metadata.thinkingLevel) {
-        args.push('--thinking-level', metadata.thinkingLevel);
+        scriptArgs.push('--thinking-level', metadata.thinkingLevel);
       }
     }
 
     // Pass agent type if specified (to select AI backend: claude, gemini, opencode)
     if (metadata?.agentType) {
-      args.push('--agent', metadata.agentType);
+      scriptArgs.push('--agent', metadata.agentType);
     }
 
     // Store context for potential restart
     this.storeTaskContext(taskId, projectPath, '', {}, true, taskDescription, specDir, metadata);
 
-    // Note: This is spec-creation but it chains to task-execution via run.py
-    this.processManager.spawnProcess(taskId, autoBuildSource, args, combinedEnv, 'task-execution');
+    // Spawn detached process for spec creation
+    this.spawnDetachedProcess(taskId, taskId, specRunnerPath, scriptArgs, projectPath, combinedEnv, 'spec-creation');
   }
 
   /**
@@ -377,27 +379,28 @@ export class AgentManager extends EventEmitter {
     // Get combined environment variables
     const combinedEnv = this.processManager.getCombinedEnv(projectPath);
 
-    const args = [runPath, '--spec', specId, '--project-dir', projectPath];
+    // Build script arguments (without script path - that's passed separately)
+    const scriptArgs = ['--spec', specId, '--project-dir', projectPath];
 
     // Always use auto-continue when running from UI (non-interactive)
-    args.push('--auto-continue');
+    scriptArgs.push('--auto-continue');
 
     // Force: When user starts a task from the UI, that IS their approval
-    args.push('--force');
+    scriptArgs.push('--force');
 
     // Pass base branch if specified (ensures worktrees are created from the correct branch)
     if (options.baseBranch) {
-      args.push('--base-branch', options.baseBranch);
+      scriptArgs.push('--base-branch', options.baseBranch);
     }
 
     // Pass resume session ID if specified (to resume an interrupted Claude session)
     if (options.resumeSessionId) {
-      args.push('--resume-session', options.resumeSessionId);
+      scriptArgs.push('--resume-session', options.resumeSessionId);
     }
 
     // Pass agent type if specified (to select AI backend: claude, gemini, opencode)
     if (options.agentType) {
-      args.push('--agent', options.agentType);
+      scriptArgs.push('--agent', options.agentType);
     }
 
     // Note: --parallel was removed from run.py CLI - parallel execution is handled internally by the agent
@@ -408,7 +411,8 @@ export class AgentManager extends EventEmitter {
     // Store context for potential restart
     this.storeTaskContext(taskId, projectPath, specId, options, false);
 
-    this.processManager.spawnProcess(taskId, autoBuildSource, args, combinedEnv, 'task-execution');
+    // Spawn detached process for task execution
+    this.spawnDetachedProcess(taskId, specId, runPath, scriptArgs, projectPath, combinedEnv, 'task-execution');
   }
 
   /**
@@ -419,6 +423,13 @@ export class AgentManager extends EventEmitter {
     projectPath: string,
     specId: string
   ): void {
+    // Pre-flight auth check: Verify active profile has valid authentication
+    const profileManager = getClaudeProfileManager();
+    if (!profileManager.hasValidAuth()) {
+      this.emit('error', taskId, 'Claude authentication required. Please authenticate in Settings > Claude Profiles before starting tasks.');
+      return;
+    }
+
     const autoBuildSource = this.processManager.getAutoBuildSourcePath();
 
     if (!autoBuildSource) {
@@ -436,9 +447,173 @@ export class AgentManager extends EventEmitter {
     // Get combined environment variables
     const combinedEnv = this.processManager.getCombinedEnv(projectPath);
 
-    const args = [runPath, '--spec', specId, '--project-dir', projectPath, '--qa'];
+    // Build script arguments (without script path - that's passed separately)
+    const scriptArgs = ['--spec', specId, '--project-dir', projectPath, '--qa'];
 
-    this.processManager.spawnProcess(taskId, autoBuildSource, args, combinedEnv, 'qa-process');
+    // Spawn detached process for QA
+    this.spawnDetachedProcess(taskId, specId, runPath, scriptArgs, projectPath, combinedEnv, 'qa-process');
+  }
+
+  /**
+   * Spawn a detached agent process with full monitoring
+   *
+   * This method replaces the old attached spawnProcess approach. It:
+   * 1. Spawns a detached process that survives GUI restarts
+   * 2. Writes output to a log file at .auto-claude/agent-output/{specId}.log
+   * 3. Registers the agent in the registry for discovery
+   * 4. Sets up file streaming to tail the output
+   * 5. Sets up PID monitoring to detect when the process exits
+   *
+   * @param taskId - Unique identifier for the task (used for events)
+   * @param specId - Spec identifier (used for registry and output file)
+   * @param scriptPath - Full path to the Python script to run
+   * @param args - Arguments to pass to the script (excluding script path)
+   * @param projectPath - Working directory for the process
+   * @param env - Environment variables to pass
+   * @param processType - Type of process for event handling
+   */
+  private spawnDetachedProcess(
+    taskId: string,
+    specId: string,
+    scriptPath: string,
+    args: string[],
+    projectPath: string,
+    env: Record<string, string>,
+    processType: 'task-execution' | 'spec-creation' | 'qa-process'
+  ): void {
+    // Kill any existing process for this task
+    this.killTask(taskId);
+
+    // Also disconnect from any reconnected agent with this taskId
+    if (this.reconnectedAgents.has(taskId)) {
+      this.disconnectFromAgent(taskId);
+    }
+
+    // Get Python command from processManager
+    const pythonPath = this.processManager.getPythonPath();
+    const [pythonCommand, pythonBaseArgs] = parsePythonCommand(pythonPath);
+
+    // Get profile environment for Claude authentication
+    const profileEnv = getProfileEnv();
+
+    // Build full args array: [script, ...args]
+    const fullArgs = [...pythonBaseArgs, scriptPath, ...args];
+
+    // Spawn the detached process
+    let spawnResult;
+    try {
+      spawnResult = spawnAgentProcess({
+        specId,
+        command: pythonCommand,
+        args: fullArgs,
+        cwd: projectPath,
+        env: {
+          ...env,
+          ...profileEnv
+        }
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[AgentManager] Failed to spawn detached process for ${taskId}:`, errorMsg);
+      this.emit('error', taskId, `Failed to spawn process: ${errorMsg}`);
+      return;
+    }
+
+    console.log(
+      `[AgentManager] Spawned detached process for ${taskId}: ` +
+      `PID=${spawnResult.pid}, outputFile=${spawnResult.outputFile}`
+    );
+
+    // Create registry entry (spawnAgentProcess already registered, but we need the full entry)
+    const registry = getAgentRegistry();
+    const entry = registry.get(specId);
+
+    if (!entry) {
+      console.error(`[AgentManager] Registry entry not found after spawn for ${specId}`);
+      this.emit('error', taskId, 'Failed to register agent in registry');
+      return;
+    }
+
+    // Create FileOutputStreamer to tail the output file
+    let streamer: FileOutputStreamer;
+    try {
+      streamer = createFileOutputStreamer();
+    } catch (error) {
+      console.error(`[AgentManager] Failed to create file streamer for ${taskId}:`, error);
+      this.emit('error', taskId, 'Failed to create output file streamer');
+      return;
+    }
+
+    // Create the reconnected agent entry (same structure works for newly spawned)
+    const agentEntry: ReconnectedAgent = {
+      entry,
+      taskId,
+      streamer,
+      pidCheckInterval: undefined,
+      markedAsPossiblyCrashed: false,
+      completionDetected: false
+    };
+
+    // Set up event handlers on the streamer
+    streamer.on('line', (line: string) => {
+      // Emit log event for the renderer
+      this.emit('log', taskId, line + '\n');
+
+      // Check for completion markers
+      this.checkLineForCompletion(agentEntry, line);
+
+      // Parse for execution progress updates
+      const isSpecRunner = processType === 'spec-creation';
+      const progressUpdate = this.events.parseExecutionPhase(line, 'coding', isSpecRunner);
+      if (progressUpdate) {
+        this.emit('execution-progress', taskId, {
+          phase: progressUpdate.phase,
+          phaseProgress: 50,
+          overallProgress: this.events.calculateOverallProgress(progressUpdate.phase, 50),
+          currentSubtask: progressUpdate.currentSubtask,
+          message: progressUpdate.message
+        });
+      }
+    });
+
+    streamer.on('error', (error: Error) => {
+      console.error(`[AgentManager] Streamer error for ${taskId}:`, error.message);
+    });
+
+    // Store in reconnectedAgents map for monitoring
+    this.reconnectedAgents.set(taskId, agentEntry);
+
+    // Start the streamer on the output file
+    const startOptions = {
+      seekToEnd: false, // Start from beginning for new processes
+      watchMode: 'watchFile' as const,
+      pollInterval: 500
+    };
+    if (spawnResult.outputFile && existsSync(spawnResult.outputFile)) {
+      streamer.start(spawnResult.outputFile, startOptions);
+    } else if (spawnResult.outputFile) {
+      // File might not exist yet - wait briefly and retry
+      setTimeout(() => {
+        if (spawnResult.outputFile && existsSync(spawnResult.outputFile)) {
+          streamer.start(spawnResult.outputFile, startOptions);
+        }
+      }, 500);
+    }
+
+    // Start PID monitoring
+    this.startPidMonitoring(agentEntry);
+
+    // Emit start event
+    this.emit('start', taskId, processType);
+
+    // Emit initial execution progress
+    const initialPhase = processType === 'spec-creation' ? 'planning' : 'coding';
+    this.emit('execution-progress', taskId, {
+      phase: initialPhase,
+      phaseProgress: 0,
+      overallProgress: this.events.calculateOverallProgress(initialPhase, 0),
+      message: processType === 'spec-creation' ? 'Starting spec creation...' : 'Starting build process...'
+    });
   }
 
   /**
@@ -503,24 +678,35 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
-   * Kill all running processes
+   * Kill all running processes and stop all detached agents
    */
   async killAll(): Promise<void> {
+    // Kill attached processes (legacy)
     await this.processManager.killAllProcesses();
+    // Stop all detached/reconnected agents
+    const taskIds = this.getReconnectedTasks();
+    for (const taskId of taskIds) {
+      await this.stopAgent(taskId, { forceIfNeeded: true, gracefulTimeout: 2000 });
+    }
   }
 
   /**
    * Check if a task is running
+   * Checks both attached processes (legacy) and detached/reconnected agents
    */
   isRunning(taskId: string): boolean {
-    return this.state.hasProcess(taskId);
+    return this.state.hasProcess(taskId) || this.reconnectedAgents.has(taskId);
   }
 
   /**
    * Get all running task IDs
+   * Returns both attached processes (legacy) and detached/reconnected agents
    */
   getRunningTasks(): string[] {
-    return this.state.getRunningTaskIds();
+    const attached = this.state.getRunningTaskIds();
+    const detached = Array.from(this.reconnectedAgents.keys());
+    // Return unique set
+    return [...new Set([...attached, ...detached])];
   }
 
   /**

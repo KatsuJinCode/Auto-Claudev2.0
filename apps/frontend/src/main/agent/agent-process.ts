@@ -16,6 +16,27 @@ import { findPythonCommand, parsePythonCommand } from '../python-detector';
 import { ensureDir } from '../fs-utils';
 
 /**
+ * Quote arguments containing spaces for Windows shell mode
+ * When using shell:true on Windows, cmd.exe requires paths with spaces to be quoted
+ *
+ * @param args - Array of command arguments
+ * @param useShell - Whether shell mode is being used
+ * @returns Array of arguments with spaces-containing args quoted
+ */
+export function quoteArgsForShell(args: string[], useShell: boolean): string[] {
+  if (!useShell) return args;
+  // On Windows with shell:true and cmd.exe, use double-double-quotes for escaping
+  // cmd.exe interprets "" as a literal " inside a quoted string
+  return args.map(arg => {
+    if (!arg.includes(' ') && !arg.includes('"')) return arg;
+    // Escape any existing quotes with doubled quotes and wrap in quotes
+    const escaped = arg.replace(/"/g, '""');
+    return `"${escaped}"`;
+  });
+}
+
+
+/**
  * Get the default output file path for an agent
  *
  * Output files are stored at: .auto-claude/agent-output/{specId}.log
@@ -189,15 +210,8 @@ export function isProcessRunning(pid: number): boolean {
  *   to handle the signal and shut down gracefully
  * - On Unix: Sends SIGTERM which is the standard graceful termination signal
  *
- * Note: For detached processes spawned with detached: true, this function
- * operates on the PID directly rather than through the ChildProcess object.
- *
- * Windows CTRL_BREAK_EVENT requirements:
- * - The target process must be able to receive console events
- * - When using spawnAgentProcess(), shell:true (default on Windows) ensures
- *   the process is spawned through cmd.exe with proper console allocation
- * - If the process was spawned with windowsShell: false, CTRL_BREAK_EVENT
- *   may not reach it (use forceKillAgentProcess() as fallback)
+ * If the process doesn't respond, use forceKillAgentProcess() which uses
+ * taskkill /F on Windows or SIGKILL on Unix.
  *
  * @param pid - The process ID of the agent to kill
  * @returns Result indicating success or failure with details
@@ -205,13 +219,9 @@ export function isProcessRunning(pid: number): boolean {
 export function killAgentProcess(pid: number): KillAgentResult {
   const isWindows = process.platform === 'win32';
 
-  // Select the appropriate signal for the platform
-  // On Windows, SIGBREAK maps to CTRL_BREAK_EVENT which is the graceful
-  // shutdown signal for console applications. This allows the process to
-  // handle the signal and clean up before exiting.
-  // On Unix, SIGTERM is the standard "please terminate" signal that allows
-  // processes to handle cleanup before exiting.
-  const signal: NodeJS.Signals | 'SIGBREAK' = isWindows ? 'SIGBREAK' : 'SIGTERM';
+  // On Windows with shell:true, SIGBREAK sends CTRL_BREAK_EVENT for graceful shutdown
+  // On Unix, SIGTERM is the standard graceful termination signal
+  const signal: NodeJS.Signals = isWindows ? 'SIGBREAK' : 'SIGTERM';
 
   try {
     // Check if the process is running first
@@ -648,10 +658,9 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
     stdio = ['ignore', 'ignore', 'ignore'];
   }
 
-  // Determine whether to use shell mode on Windows for CTRL event support
-  // On Windows, shell:true ensures CTRL_BREAK_EVENT can reach the process
-  // for graceful shutdown via killAgentProcess(). Defaults to true on Windows.
-  // On Unix, shell is always false (signals work without shell).
+  // Use shell mode on Windows for proper output capture and CTRL_BREAK_EVENT support
+  // Note: This shows a visible cmd.exe window. Future enhancement: embed output in UI
+  // via Running Agents view instead of external window.
   const useShell = isWindows && (options.windowsShell !== false);
 
   // Spawn options for detached process
@@ -660,18 +669,23 @@ export function spawnAgentProcess(options: SpawnAgentOptions): SpawnAgentResult 
     env: spawnEnv,
     // Detach the process so it continues running after parent exits
     detached: true,
-    // Hide console window on Windows
+    // Hide console window on Windows - works better without shell:true
     windowsHide: isWindows,
     // Configure stdio for file output or ignore
     stdio,
-    // Use shell on Windows for CTRL_BREAK_EVENT support (graceful shutdown)
-    // On Windows: shell:true spawns through cmd.exe, enabling CTRL events
-    // On Unix: shell:false (signals like SIGTERM work directly)
+    // Shell mode: now defaults to false on Windows to hide console window
+    // Graceful shutdown handled via taskkill/SIGTERM instead of CTRL_BREAK_EVENT
     shell: useShell
   };
 
+
+  // Quote command and arguments with spaces for Windows shell mode
+  const quotedArgs = quoteArgsForShell(args, useShell);
+  // Also quote the command if it has spaces (e.g., path to python.exe in a directory with spaces)
+  const quotedCommand = useShell && command.includes(' ') ? `"${command}"` : command;
+
   // Spawn the detached process
-  const childProcess = spawn(command, args, spawnOptions);
+  const childProcess = spawn(quotedCommand, quotedArgs, spawnOptions);
 
   // Verify we got a valid PID
   if (childProcess.pid === undefined) {
@@ -904,252 +918,6 @@ export class AgentProcessManager {
     } catch {
       return {};
     }
-  }
-
-  /**
-   * Spawn a Python process for task execution
-   */
-  spawnProcess(
-    taskId: string,
-    cwd: string,
-    args: string[],
-    extraEnv: Record<string, string> = {},
-    processType: ProcessType = 'task-execution'
-  ): void {
-    const isSpecRunner = processType === 'spec-creation';
-    // Kill existing process for this task if any
-    this.killProcess(taskId);
-
-    // Generate unique spawn ID for this process instance
-    const spawnId = this.state.generateSpawnId();
-
-    // Get active Claude profile environment (CLAUDE_CONFIG_DIR if not default)
-    const profileEnv = getProfileEnv();
-
-    // Parse Python command to handle space-separated commands like "py -3"
-    const [pythonCommand, pythonBaseArgs] = parsePythonCommand(this.pythonPath);
-    const childProcess = spawn(pythonCommand, [...pythonBaseArgs, ...args], {
-      cwd,
-      env: {
-        ...process.env,
-        ...extraEnv,
-        ...profileEnv, // Include active Claude profile config
-        PYTHONUNBUFFERED: '1', // Ensure real-time output
-        PYTHONIOENCODING: 'utf-8', // Ensure UTF-8 encoding on Windows
-        PYTHONUTF8: '1' // Force Python UTF-8 mode on Windows (Python 3.7+)
-      }
-    });
-
-    this.state.addProcess(taskId, {
-      taskId,
-      process: childProcess,
-      startedAt: new Date(),
-      spawnId
-    });
-
-    // Track execution progress
-    let currentPhase: ExecutionProgressData['phase'] = isSpecRunner ? 'planning' : 'planning';
-    let phaseProgress = 0;
-    let currentSubtask: string | undefined;
-    let lastMessage: string | undefined;
-    // Collect all output for rate limit detection
-    let allOutput = '';
-
-    // Emit initial progress
-    this.emitter.emit('execution-progress', taskId, {
-      phase: currentPhase,
-      phaseProgress: 0,
-      overallProgress: this.events.calculateOverallProgress(currentPhase, 0),
-      message: isSpecRunner ? 'Starting spec creation...' : 'Starting build process...'
-    });
-
-    const processLog = (log: string) => {
-      // Collect output for rate limit detection (keep last 10KB)
-      allOutput = (allOutput + log).slice(-10000);
-      // Parse for phase transitions
-      const phaseUpdate = this.events.parseExecutionPhase(log, currentPhase, isSpecRunner);
-
-      if (phaseUpdate) {
-        const phaseChanged = phaseUpdate.phase !== currentPhase;
-        currentPhase = phaseUpdate.phase;
-
-        if (phaseUpdate.currentSubtask) {
-          currentSubtask = phaseUpdate.currentSubtask;
-        }
-        if (phaseUpdate.message) {
-          lastMessage = phaseUpdate.message;
-        }
-
-        // Reset phase progress on phase change, otherwise increment
-        if (phaseChanged) {
-          phaseProgress = 10; // Start new phase at 10%
-        } else {
-          phaseProgress = Math.min(90, phaseProgress + 5); // Increment within phase
-        }
-
-        const overallProgress = this.events.calculateOverallProgress(currentPhase, phaseProgress);
-
-        this.emitter.emit('execution-progress', taskId, {
-          phase: currentPhase,
-          phaseProgress,
-          overallProgress,
-          currentSubtask,
-          message: lastMessage
-        });
-      }
-    };
-
-    // Handle stdout - explicitly decode as UTF-8 for cross-platform Unicode support
-    childProcess.stdout?.on('data', (data: Buffer) => {
-      const log = data.toString('utf8');
-      this.emitter.emit('log', taskId, log);
-      processLog(log);
-      // Print to console when DEBUG is enabled (visible in pnpm dev terminal)
-      if (['true', '1', 'yes', 'on'].includes(process.env.DEBUG?.toLowerCase() ?? '')) {
-        console.log(`[Agent:${taskId}] ${log.trim()}`);
-      }
-    });
-
-    // Handle stderr - explicitly decode as UTF-8 for cross-platform Unicode support
-    childProcess.stderr?.on('data', (data: Buffer) => {
-      const log = data.toString('utf8');
-      // Some Python output goes to stderr (like progress bars)
-      // so we treat it as log, not error
-      this.emitter.emit('log', taskId, log);
-      processLog(log);
-      // Print to console when DEBUG is enabled (visible in pnpm dev terminal)
-      if (['true', '1', 'yes', 'on'].includes(process.env.DEBUG?.toLowerCase() ?? '')) {
-        console.log(`[Agent:${taskId}] ${log.trim()}`);
-      }
-    });
-
-    // Handle process exit
-    childProcess.on('exit', (code: number | null) => {
-      this.state.deleteProcess(taskId);
-
-      // Check if this specific spawn was killed (vs exited naturally)
-      // If killed, don't emit exit event to prevent race condition with new process
-      if (this.state.wasSpawnKilled(spawnId)) {
-        this.state.clearKilledSpawn(spawnId);
-        return;
-      }
-
-      // Check for rate limit if process failed
-      if (code !== 0) {
-        console.log('[AgentProcess] Process failed with code:', code, 'for task:', taskId);
-        console.log('[AgentProcess] Checking for rate limit in output (last 500 chars):', allOutput.slice(-500));
-
-        const rateLimitDetection = detectRateLimit(allOutput);
-        console.log('[AgentProcess] Rate limit detection result:', {
-          isRateLimited: rateLimitDetection.isRateLimited,
-          resetTime: rateLimitDetection.resetTime,
-          limitType: rateLimitDetection.limitType,
-          profileId: rateLimitDetection.profileId,
-          suggestedProfile: rateLimitDetection.suggestedProfile
-        });
-
-        if (rateLimitDetection.isRateLimited) {
-          // Check if auto-swap is enabled
-          const profileManager = getClaudeProfileManager();
-          const autoSwitchSettings = profileManager.getAutoSwitchSettings();
-
-          console.log('[AgentProcess] Auto-switch settings:', {
-            enabled: autoSwitchSettings.enabled,
-            autoSwitchOnRateLimit: autoSwitchSettings.autoSwitchOnRateLimit,
-            proactiveSwapEnabled: autoSwitchSettings.proactiveSwapEnabled
-          });
-
-          if (autoSwitchSettings.enabled && autoSwitchSettings.autoSwitchOnRateLimit) {
-            const currentProfileId = rateLimitDetection.profileId;
-            const bestProfile = profileManager.getBestAvailableProfile(currentProfileId);
-
-            console.log('[AgentProcess] Best available profile:', bestProfile ? {
-              id: bestProfile.id,
-              name: bestProfile.name
-            } : 'NONE');
-
-            if (bestProfile) {
-              // Switch active profile
-              console.log('[AgentProcess] AUTO-SWAP: Switching from', currentProfileId, 'to', bestProfile.id);
-              profileManager.setActiveProfile(bestProfile.id);
-
-              // Emit swap info (for modal)
-              const source = processType === 'spec-creation' ? 'roadmap' : 'task';
-              const rateLimitInfo = createSDKRateLimitInfo(source, rateLimitDetection, {
-                taskId
-              });
-              rateLimitInfo.wasAutoSwapped = true;
-              rateLimitInfo.swappedToProfile = {
-                id: bestProfile.id,
-                name: bestProfile.name
-              };
-              rateLimitInfo.swapReason = 'reactive';
-
-              console.log('[AgentProcess] Emitting sdk-rate-limit event (auto-swapped):', rateLimitInfo);
-              this.emitter.emit('sdk-rate-limit', rateLimitInfo);
-
-              // Restart task
-              console.log('[AgentProcess] Emitting auto-swap-restart-task event for task:', taskId);
-              this.emitter.emit('auto-swap-restart-task', taskId, bestProfile.id);
-              return;
-            } else {
-              console.log('[AgentProcess] No alternative profile available - falling back to manual modal');
-            }
-          } else {
-            console.log('[AgentProcess] Auto-switch disabled - showing manual modal');
-          }
-
-          // Fall back to manual modal (no auto-swap or no alternative profile)
-          const source = processType === 'spec-creation' ? 'roadmap' : 'task';
-          const rateLimitInfo = createSDKRateLimitInfo(source, rateLimitDetection, {
-            taskId
-          });
-          console.log('[AgentProcess] Emitting sdk-rate-limit event (manual):', rateLimitInfo);
-          this.emitter.emit('sdk-rate-limit', rateLimitInfo);
-        } else {
-          console.log('[AgentProcess] No rate limit detected - checking for auth failure');
-          // Not rate limited - check for authentication failure
-          const authFailureDetection = detectAuthFailure(allOutput);
-          if (authFailureDetection.isAuthFailure) {
-            console.log('[AgentProcess] Auth failure detected:', authFailureDetection);
-            this.emitter.emit('auth-failure', taskId, {
-              profileId: authFailureDetection.profileId,
-              failureType: authFailureDetection.failureType,
-              message: authFailureDetection.message,
-              originalError: authFailureDetection.originalError
-            });
-          } else {
-            console.log('[AgentProcess] Process failed but no rate limit or auth failure detected');
-          }
-        }
-      }
-
-      // Emit final progress
-      const finalPhase = code === 0 ? 'complete' : 'failed';
-      this.emitter.emit('execution-progress', taskId, {
-        phase: finalPhase,
-        phaseProgress: 100,
-        overallProgress: code === 0 ? 100 : this.events.calculateOverallProgress(currentPhase, phaseProgress),
-        message: code === 0 ? 'Process completed successfully' : `Process exited with code ${code}`
-      });
-
-      this.emitter.emit('exit', taskId, code, processType);
-    });
-
-    // Handle process error
-    childProcess.on('error', (err: Error) => {
-      console.error('[AgentProcess] Process error:', err.message);
-      this.state.deleteProcess(taskId);
-
-      this.emitter.emit('execution-progress', taskId, {
-        phase: 'failed',
-        phaseProgress: 0,
-        overallProgress: 0,
-        message: `Error: ${err.message}`
-      });
-
-      this.emitter.emit('error', taskId, err.message);
-    });
   }
 
   /**

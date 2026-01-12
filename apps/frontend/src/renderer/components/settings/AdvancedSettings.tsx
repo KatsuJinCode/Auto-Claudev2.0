@@ -434,6 +434,28 @@ export function AdvancedSettings({ settings, onSettingsChange, section, version 
               }
             />
           </div>
+
+          {/* Developer Tools */}
+          <div className="pt-4 border-t border-border">
+            <h4 className="text-sm font-medium text-foreground mb-3">Developer</h4>
+            <div className="flex items-center justify-between p-4 rounded-lg border border-border bg-muted/30">
+              <div className="space-y-1">
+                <Label className="font-medium text-foreground">Restart GUI</Label>
+                <p className="text-sm text-muted-foreground">
+                  Restart the app to pick up code changes. Running agents will continue and reconnect automatically.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  await window.electronAPI.restartApp();
+                }}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Restart
+              </Button>
+            </div>
+          </div>
         </div>
       </SettingsSection>
     );

@@ -299,6 +299,15 @@ export function registerSettingsHandlers(
     return version;
   });
 
+  // Restart the app (for dev workflow - agents survive and reconnect on startup)
+  ipcMain.handle(IPC_CHANNELS.APP_RESTART, async (): Promise<void> => {
+    console.log('[settings-handlers] APP_RESTART: Restarting app...');
+    // Note: Detached agent processes will continue running
+    // On restart, main/index.ts calls discoverRunningAgents() and reconnectToAgent()
+    app.relaunch();
+    app.exit(0);
+  });
+
   // ============================================
   // Shell Operations
   // ============================================

@@ -245,6 +245,10 @@ export interface ElectronAPI {
 
   // App info
   getAppVersion: () => Promise<string>;
+  restartApp: () => Promise<void>;
+
+  // Dev mode notifications
+  onDevBackendChanged: (callback: (info: { file: string; timestamp: number }) => void) => () => void;
 
   // Roadmap operations
   getRoadmap: (projectId: string) => Promise<IPCResult<Roadmap | null>>;

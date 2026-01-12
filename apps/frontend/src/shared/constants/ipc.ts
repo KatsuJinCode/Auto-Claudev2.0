@@ -114,6 +114,10 @@ export const IPC_CHANNELS = {
 
   // App info
   APP_VERSION: 'app:version',
+  APP_RESTART: 'app:restart',  // Restart app (for dev workflow - agents survive restart)
+
+  // Dev mode notifications (main -> renderer)
+  DEV_BACKEND_CHANGED: 'dev:backendChanged',  // Backend code changed, reload needed
 
   // Shell operations
   SHELL_OPEN_EXTERNAL: 'shell:openExternal',

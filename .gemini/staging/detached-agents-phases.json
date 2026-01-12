@@ -1,0 +1,148 @@
+{
+  "description": "Decouple AI agent processes from Electron GUI lifecycle. Agents should run as independent processes that survive GUI restarts, enabling development workflow without killing running tasks. GUI reconnects to running agents on startup.",
+  "workflow_type": "feature",
+  "spec_content": "# Detached Agent Processes\n\n## Problem\nCurrently, AI agents spawn as child processes of the Electron app. When the GUI restarts (for development or updates), all running agents are killed immediately, losing progress and requiring manual restart. This severely constrains development workflow.\n\n## Solution\nSpawn agents as detached, independent processes that:\n1. Survive GUI restarts\n2. Complete their current subtask even if GUI closes\n3. Can be discovered and reconnected by GUI on startup\n4. Write progress to files for GUI to poll\n\n## Architecture Changes\n- Process spawning: Use `detached: true` and `unref()` to decouple from parent\n- Agent registry: JSON file tracking running agents (PID, session, spec, status)\n- Process discovery: On startup, read registry and verify PIDs are alive\n- Output streaming: Reconnect to agent output via file tailing or named pipes\n- Graceful shutdown: GUI close doesn't kill agents, just disconnects\n\n## Success Criteria\n1. Restart GUI without killing running agents\n2. GUI reconnects to running agents on startup\n3. Agents finish current subtask if GUI closes mid-execution\n4. Development workflow allows rapid GUI iteration\n5. Agent status visible in GUI even after reconnect",
+  "phases": [
+    {
+      "name": "Agent Registry System",
+      "description": "Create persistent registry to track running agent processes",
+      "chunks": [
+        {
+          "description": "Create AgentRegistry class in apps/frontend/src/main/agent/agent-registry.ts with load/save/update methods",
+          "files": ["apps/frontend/src/main/agent/agent-registry.ts"],
+          "verification": "Registry can persist and load agent entries from .auto-claude-agents.json"
+        },
+        {
+          "description": "Define AgentRegistryEntry interface with pid, specId, sessionId, startedAt, status, outputFile fields",
+          "files": ["apps/frontend/src/main/agent/agent-registry.ts"],
+          "verification": "TypeScript compiles with complete interface"
+        },
+        {
+          "description": "Add methods: registerAgent(), unregisterAgent(), getRunningAgents(), isAgentAlive() using process.kill(pid, 0)",
+          "files": ["apps/frontend/src/main/agent/agent-registry.ts"],
+          "verification": "Can register, check, and unregister agents"
+        }
+      ]
+    },
+    {
+      "name": "Detached Process Spawning",
+      "description": "Modify agent spawning to create independent processes",
+      "depends_on": [1],
+      "chunks": [
+        {
+          "description": "Update spawnAgentProcess() in agent-process.ts to use detached: true, stdio configuration for file output",
+          "files": ["apps/frontend/src/main/agent/agent-process.ts"],
+          "verification": "Spawned process continues running after parent would normally exit"
+        },
+        {
+          "description": "Create output file per agent at .auto-claude/agent-output/{specId}.log for stdout/stderr capture",
+          "files": ["apps/frontend/src/main/agent/agent-process.ts"],
+          "verification": "Agent output written to file that persists across GUI restarts"
+        },
+        {
+          "description": "Register spawned agent in registry immediately after spawn with PID and output file path",
+          "files": ["apps/frontend/src/main/agent/agent-process.ts"],
+          "verification": "Registry updated when agent starts"
+        },
+        {
+          "description": "Call child.unref() after spawn so Node doesn't wait for child process",
+          "files": ["apps/frontend/src/main/agent/agent-process.ts"],
+          "verification": "GUI can exit cleanly without waiting for agents"
+        }
+      ]
+    },
+    {
+      "name": "Agent Discovery and Reconnection",
+      "description": "Enable GUI to find and reconnect to running agents on startup",
+      "depends_on": [1, 2],
+      "chunks": [
+        {
+          "description": "Add discoverRunningAgents() to agent-manager.ts that reads registry and verifies PIDs",
+          "files": ["apps/frontend/src/main/agent/agent-manager.ts"],
+          "verification": "Returns list of agents that are actually still running"
+        },
+        {
+          "description": "Create reconnectToAgent() that tails output file and resumes status updates to renderer",
+          "files": ["apps/frontend/src/main/agent/agent-manager.ts"],
+          "verification": "Can reconnect to running agent and receive new output"
+        },
+        {
+          "description": "Call discoverRunningAgents() on app startup in main process initialization",
+          "files": ["apps/frontend/src/main/index.ts"],
+          "verification": "GUI shows running agents immediately after restart"
+        },
+        {
+          "description": "Clean up stale registry entries where PID no longer exists",
+          "files": ["apps/frontend/src/main/agent/agent-registry.ts"],
+          "verification": "Dead agent entries removed from registry on discovery"
+        }
+      ]
+    },
+    {
+      "name": "Output Streaming via Files",
+      "description": "Stream agent output through files instead of direct pipe",
+      "depends_on": [2],
+      "chunks": [
+        {
+          "description": "Create FileOutputStreamer class that tails a file and emits events for new content",
+          "files": ["apps/frontend/src/main/agent/file-output-streamer.ts"],
+          "verification": "Can tail a growing file and emit line-by-line events"
+        },
+        {
+          "description": "Update agent-manager to use FileOutputStreamer for both new and reconnected agents",
+          "files": ["apps/frontend/src/main/agent/agent-manager.ts"],
+          "verification": "Output streaming works same way for fresh and reconnected agents"
+        },
+        {
+          "description": "Add seek-to-end option for reconnection (don't replay old output)",
+          "files": ["apps/frontend/src/main/agent/file-output-streamer.ts"],
+          "verification": "Reconnected agents only show new output, not full history"
+        }
+      ]
+    },
+    {
+      "name": "Graceful Shutdown Behavior",
+      "description": "Handle GUI close without killing agents",
+      "depends_on": [2, 3],
+      "chunks": [
+        {
+          "description": "Add app 'before-quit' handler that disconnects from agents without killing them",
+          "files": ["apps/frontend/src/main/index.ts"],
+          "verification": "Closing GUI doesn't terminate running agent processes"
+        },
+        {
+          "description": "Add explicit Stop button behavior that DOES kill the agent process",
+          "files": ["apps/frontend/src/main/agent/agent-manager.ts"],
+          "verification": "User can still manually stop agents when needed"
+        },
+        {
+          "description": "Unregister agent from registry only when process actually exits (not on disconnect)",
+          "files": ["apps/frontend/src/main/agent/agent-manager.ts"],
+          "verification": "Registry accurately reflects running vs stopped agents"
+        }
+      ]
+    },
+    {
+      "name": "Status Synchronization",
+      "description": "Keep GUI status in sync with detached agent state",
+      "depends_on": [3, 4],
+      "chunks": [
+        {
+          "description": "Update TASK_CHECK_RUNNING IPC handler to also check agent registry",
+          "files": ["apps/frontend/src/main/ipc-handlers/task/execution-handlers.ts"],
+          "verification": "isRunning returns true for reconnected agents"
+        },
+        {
+          "description": "Emit status events to renderer when reconnecting to show correct task state",
+          "files": ["apps/frontend/src/main/agent/agent-manager.ts"],
+          "verification": "TaskCard shows correct running/progress state after reconnect"
+        },
+        {
+          "description": "Handle agent completion detection via output file monitoring (look for completion markers)",
+          "files": ["apps/frontend/src/main/agent/agent-manager.ts"],
+          "verification": "GUI updates task status when detached agent completes"
+        }
+      ]
+    }
+  ]
+}

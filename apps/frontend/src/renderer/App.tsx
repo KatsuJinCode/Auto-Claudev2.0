@@ -49,6 +49,7 @@ import { OnboardingWizard } from './components/onboarding';
 import { AppUpdateNotification } from './components/AppUpdateNotification';
 import { UsageIndicator } from './components/UsageIndicator';
 import { ProactiveSwapListener } from './components/ProactiveSwapListener';
+import { DevReloadBanner } from './components/DevReloadBanner';
 import { GitHubSetupModal } from './components/GitHubSetupModal';
 import { useProjectStore, loadProjects, addProject, initializeProject } from './stores/project-store';
 import { useTaskStore, loadTasks } from './stores/task-store';
@@ -552,6 +553,7 @@ export function App() {
   return (
     <TooltipProvider>
       <ProactiveSwapListener />
+      <DevReloadBanner />
       <div className="flex h-screen bg-background">
         {/* Sidebar */}
         <Sidebar
