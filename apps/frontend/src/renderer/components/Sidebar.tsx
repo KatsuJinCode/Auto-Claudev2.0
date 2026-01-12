@@ -67,6 +67,7 @@ interface NavItem {
 
 const projectNavItems: NavItem[] = [
   { id: 'kanban', label: 'Kanban Board', icon: LayoutGrid, shortcut: 'K' },
+  { id: 'running-agents', label: 'Running Agents', icon: Activity, shortcut: 'R' },
   { id: 'terminals', label: 'Agent Terminals', icon: Terminal, shortcut: 'A' },
   { id: 'insights', label: 'Insights', icon: Sparkles, shortcut: 'N' },
   { id: 'roadmap', label: 'Roadmap', icon: Map, shortcut: 'D' },
