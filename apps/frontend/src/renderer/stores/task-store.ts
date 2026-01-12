@@ -120,6 +120,8 @@ interface TaskState {
   updateTaskFromPlan: (taskId: string, plan: ImplementationPlan) => void;
   updateExecutionProgress: (taskId: string, progress: Partial<ExecutionProgress>) => void;
   appendLog: (taskId: string, log: string) => void;
+  /** Clear logs for a task (visual only, file log remains intact) */
+  clearTaskLogs: (taskId: string) => void;
   selectTask: (taskId: string | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
