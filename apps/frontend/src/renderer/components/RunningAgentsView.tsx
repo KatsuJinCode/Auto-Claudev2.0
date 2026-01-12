@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, X, Trash2, ChevronDown, Play, Square, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Search, X, ChevronDown, Play, Square, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { ScrollArea } from './ui/scroll-area';
 import { cn } from '../lib/utils';
 import { useTaskStore, isActivityRecent } from '../stores/task-store';
 import type { Task, TaskStatus } from '../../shared/types';
