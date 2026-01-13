@@ -114,7 +114,7 @@ describe('IPC Handlers', () => {
     invokeHandler: (channel: string, event: unknown, ...args: unknown[]) => Promise<unknown>;
     getHandler: (channel: string) => Function | undefined;
   };
-  let mockMainWindow: { webContents: { send: ReturnType<typeof vi.fn> } };
+  let mockMainWindow: { webContents: { send: ReturnType<typeof vi.fn>; reload: ReturnType<typeof vi.fn> }; isDestroyed: ReturnType<typeof vi.fn> };
   let mockAgentManager: EventEmitter & {
     startSpecCreation: ReturnType<typeof vi.fn>;
     startTaskExecution: ReturnType<typeof vi.fn>;
