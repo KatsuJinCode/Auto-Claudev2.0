@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL RESTRICTIONS
+
+**FORBIDDEN ACTIONS - Never do these without explicit user permission:**
+1. **Never execute files** - Do not run `npm run dev`, `npm start`, `python run.py`, or any executable without explicit scoped user permission for that specific command
+2. **Never launch the app** - Do not start the Electron app, dev server, or any background processes
+3. **Never run commands in background** - No `run_in_background: true` without explicit permission
+
+**Before modifying existing behavior:**
+1. Understand WHY the current code exists - read comments, trace the logic
+2. Explain the purpose to the user BEFORE making changes
+3. Get explicit approval for behavior changes
+
 ## Project Overview
 
 Auto Claude is a multi-agent autonomous coding framework that builds software through coordinated AI agent sessions. It uses the Claude Code SDK to run agents in isolated workspaces with security controls.
