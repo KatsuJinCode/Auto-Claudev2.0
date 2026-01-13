@@ -478,6 +478,28 @@ describe('IPC Handlers', () => {
     });
   });
 
+  describe('app:restart handler', () => {
+    it('should reload webContents in dev mode instead of relaunching app', async () => {
+      // This test prevents regression of the blank white screen bug.
+      // In dev mode, app.relaunch() + app.exit() kills electron-vite's Vite dev server,
+      // causing the relaunched app to load a dead URL -> blank white screen.
+      // The fix is to use webContents.reload() in dev mode.
+      const { app } = await import('electron');
+      const { setupIpcHandlers } = await import('../ipc-handlers');
+      setupIpcHandlers(mockAgentManager as never, mockTerminalManager as never, () => mockMainWindow as never, mockPythonEnvManager as never);
+
+      // Clear any previous calls
+      vi.clearAllMocks();
+
+      await ipcMain.invokeHandler('app:restart', {});
+
+      // In dev mode (is.dev = true in mock), should reload webContents, NOT relaunch
+      expect(mockMainWindow.webContents.reload).toHaveBeenCalled();
+      expect(app.relaunch).not.toHaveBeenCalled();
+      expect(app.exit).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Agent Manager event forwarding', () => {
     it('should forward log events to renderer', async () => {
       const { setupIpcHandlers } = await import('../ipc-handlers');
