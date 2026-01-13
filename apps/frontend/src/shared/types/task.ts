@@ -253,6 +253,7 @@ export interface Task {
   specsPath?: string;  // Full path to specs directory for this task
   depends_on?: string[];  // Spec IDs that this task depends on (from requirements.json)
   agentType?: AgentType;  // AI agent backend used for this task (claude, gemini, opencode)
+  hasWorktree?: boolean;  // True if a worktree exists for this task (unmerged changes)
   createdAt: Date;
   updatedAt: Date;
 }
