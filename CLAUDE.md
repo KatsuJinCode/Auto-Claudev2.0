@@ -134,7 +134,12 @@ See [RELEASE.md](RELEASE.md) for detailed release process documentation.
 
 ### Core Pipeline
 
-**Spec Creation (spec_runner.py)** - Dynamic 3-8 phase pipeline based on task complexity:
+**Task Creation (create_task.py or GUI form)** - Creates task files identical to GUI:
+- Task sits in queue with status 'pending'
+- User reviews and clicks Start in GUI
+- AI pipeline then runs automatically
+
+**Spec Generation (triggered by Start)** - Dynamic 3-8 phase pipeline based on task complexity:
 - SIMPLE (3 phases): Discovery → Quick Spec → Validate
 - STANDARD (6-7 phases): Discovery → Requirements → [Research] → Context → Spec → Plan → Validate
 - COMPLEX (8 phases): Full pipeline with Research and Self-Critique phases
