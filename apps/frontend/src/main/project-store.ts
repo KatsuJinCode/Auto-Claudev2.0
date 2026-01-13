@@ -293,7 +293,7 @@ export class ProjectStore {
     }
 
     // 4. Check if worktree exists for each task (for "Unmerged Changes" badge)
-    const worktreesDir = path.join(project.path, '.worktrees');
+    // Note: worktreesDir already declared above
     const tasks = Array.from(taskMap.values()).map(task => {
       const worktreePath = path.join(worktreesDir, task.specId);
       return {
