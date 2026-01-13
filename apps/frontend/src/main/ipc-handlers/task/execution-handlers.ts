@@ -392,24 +392,10 @@ export function registerTaskExecutionHandlers(
         return { success: false, error: 'Task not found' };
       }
 
-      // Validate status transition - 'done' can only be set through merge handler
-      // UNLESS there's no worktree (limbo state - already merged/discarded or failed)
+      // User can set 'done' directly - they have full control over task status
+      // If a worktree exists with un-merged changes, the user is making an informed decision
       if (status === 'done') {
-        // Check if worktree exists
-        const worktreePath = path.join(project.path, '.worktrees', taskId);
-        const hasWorktree = existsSync(worktreePath);
-
-        if (hasWorktree) {
-          // Worktree exists - must use merge workflow
-          console.warn(`[TASK_UPDATE_STATUS] Blocked attempt to set status 'done' directly for task ${taskId}. Use merge workflow instead.`);
-          return {
-            success: false,
-            error: "Cannot set status to 'done' directly. Complete the human review and merge the worktree changes instead."
-          };
-        } else {
-          // No worktree - allow marking as done (limbo state recovery)
-          console.log(`[TASK_UPDATE_STATUS] Allowing status 'done' for task ${taskId} (no worktree found - limbo state)`);
-        }
+        console.log(`[TASK_UPDATE_STATUS] Setting status 'done' for task ${taskId}`);
       }
 
       // Validate status transition - 'human_review' requires actual work to have been done
