@@ -356,6 +356,17 @@ export function TaskCard({ task, onClick, compact = false }: TaskCardProps) {
                 Archived
               </Badge>
             )}
+            {/* Unmerged Changes indicator - task is done but worktree still exists */}
+            {task.status === 'done' && task.hasWorktree && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-destructive/10 text-destructive border-destructive/30"
+                title="This task has unmerged changes in a worktree. Use Merge to integrate changes into your project."
+              >
+                <GitBranch className="h-2.5 w-2.5" />
+                Unmerged
+              </Badge>
+            )}
             {/* Activity indicator - shows when agent is actively processing (recent log activity) */}
             {isActive && (
               <Badge
