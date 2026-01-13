@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 env_file = Path(__file__).parent.parent / ".env"
 if env_file.exists():
-    load_dotenv(env_file)
+    load_dotenv(env_file, override=True)  # override=True to handle GUI passing empty env vars
 
 from debug import debug, debug_error, debug_warning
 
