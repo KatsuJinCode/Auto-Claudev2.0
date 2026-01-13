@@ -30,37 +30,29 @@ claude setup-token
 # Add to apps/backend/.env: CLAUDE_CODE_OAUTH_TOKEN=your-token
 ```
 
-### Creating Tasks (CRITICAL - Read This First)
+### Creating Tasks
 
-**⚠️ THERE ARE TWO DIFFERENT TOOLS. USING THE WRONG ONE IS A SERIOUS MISTAKE.**
+**USE `create_task.py` - This is the ONLY correct tool for task creation.**
 
-| Tool | What It Does | When to Use |
-|------|--------------|-------------|
-| `create_task.py` | Creates task FILES only. NO agents run. User reviews in GUI, then clicks Start. | **DEFAULT. Use this unless user explicitly asks for autonomous execution.** |
-| `spec_runner.py` | Runs FULL AI pipeline automatically. Multiple agents execute immediately. | Only when user explicitly requests autonomous/automatic spec creation. |
-
-**When user says "create a task" or "make a spec" → USE `create_task.py`**
+This tool creates the same files as the GUI form. Task sits in queue until user clicks Start.
 
 ```bash
 cd apps/backend
 
-# CREATE TASK FOR USER REVIEW (default - no agents run)
+# Create a task (same as filling out GUI form)
 python create_task.py --project-dir /path/to/project --description "What to build"
-python create_task.py --project-dir /path/to/project --description "Fix the login bug" --category bug_fix
+python create_task.py --project-dir /path/to/project --description "Fix the login bug" --category bug_fix --priority high
 
-# The task appears in the GUI. User reviews and clicks Start to run the pipeline.
+# Task appears in GUI → User reviews → User clicks Start → AI pipeline runs
 ```
 
-### Running Specs Autonomously (Only When Explicitly Requested)
+Full documentation: `~/.claude/topics/development-tools/AUTO_CLAUDE_SPEC_CREATION.md`
+
+### Running Implementation
 ```bash
 cd apps/backend
 
-# AUTONOMOUS EXECUTION - runs AI agents immediately (use only when explicitly requested)
-python spec_runner.py --interactive
-python spec_runner.py --task "Add user authentication"
-python spec_runner.py --task "Fix button" --complexity simple
-
-# Run implementation after spec exists
+# Run implementation after task is started
 python run.py --spec 001
 
 # List all specs
