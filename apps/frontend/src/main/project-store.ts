@@ -292,7 +292,16 @@ export class ProjectStore {
       }
     }
 
-    const tasks = Array.from(taskMap.values());
+    // 4. Check if worktree exists for each task (for "Unmerged Changes" badge)
+    const worktreesDir = path.join(project.path, '.worktrees');
+    const tasks = Array.from(taskMap.values()).map(task => {
+      const worktreePath = path.join(worktreesDir, task.specId);
+      return {
+        ...task,
+        hasWorktree: existsSync(worktreePath)
+      };
+    });
+
     console.warn('[ProjectStore] Returning', tasks.length, 'unique tasks (after deduplication)');
     return tasks;
   }
