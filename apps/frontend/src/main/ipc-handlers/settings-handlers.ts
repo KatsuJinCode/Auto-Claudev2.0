@@ -302,6 +302,21 @@ export function registerSettingsHandlers(
   // Restart the app (for dev workflow - agents survive and reconnect on startup)
   ipcMain.handle(IPC_CHANNELS.APP_RESTART, async (): Promise<void> => {
     console.log('[settings-handlers] APP_RESTART: Restarting app...');
+
+    // In dev mode, just reload the renderer webContents instead of relaunching.
+    // app.relaunch() + app.exit(0) kills the Electron process, which causes
+    // electron-vite to exit too (killing the Vite dev server), leaving the
+    // new Electron process with a dead URL → blank white screen.
+    if (is.dev) {
+      const mainWindow = getMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        console.log('[settings-handlers] Dev mode: reloading renderer webContents');
+        mainWindow.webContents.reload();
+        return;
+      }
+    }
+
+    // Production: full app restart
     // Note: Detached agent processes will continue running
     // On restart, main/index.ts calls discoverRunningAgents() and reconnectToAgent()
     app.relaunch();
