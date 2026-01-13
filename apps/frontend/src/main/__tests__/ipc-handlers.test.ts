@@ -147,7 +147,8 @@ describe('IPC Handlers', () => {
 
     // Create mock window
     mockMainWindow = {
-      webContents: { send: vi.fn() }
+      webContents: { send: vi.fn(), reload: vi.fn() },
+      isDestroyed: vi.fn(() => false)
     };
 
     // Create mock agent manager
